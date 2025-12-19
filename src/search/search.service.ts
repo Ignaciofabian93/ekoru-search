@@ -6,12 +6,13 @@ import {
   SearchSortBy,
   AutocompleteInput,
   RecommendationInput,
+  TrackSearchClickInput,
+  TrackItemViewInput,
 } from "./dto/search.input";
 import {
   SearchResponse,
   SearchResultItem,
   SearchResultType,
-  SearchPageInfo,
   SearchFacets,
   AutocompleteResponse,
   AutocompleteItem,
@@ -20,12 +21,20 @@ import {
   TrendingResponse,
   TrendingSearch,
 } from "./entities/search-result.entity";
+import { FullTextSearchStrategy } from "./strategies/fulltext-search.strategy";
 
 @Injectable()
 export class SearchService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fullTextSearch: FullTextSearchStrategy
+  ) {}
 
-  async search(input: SearchInput): Promise<SearchResponse> {
+  async search(
+    input: SearchInput,
+    userId?: string,
+    sessionId?: string
+  ): Promise<SearchResponse> {
     const startTime = Date.now();
     const {
       query,
@@ -46,39 +55,38 @@ export class SearchService {
     const searchTerms = this.tokenize(normalizedQuery);
     const correctedQuery = await this.spellCheck(normalizedQuery);
 
-    // Search products and services based on type
-    const [productResults, serviceResults] = await Promise.all([
-      type !== SearchType.SERVICES
-        ? this.searchProducts(searchTerms, {
-            minPrice,
-            maxPrice,
-            categories,
-            tags,
-            hasOffer,
-            minRating,
-          })
-        : Promise.resolve([]),
-      type !== SearchType.PRODUCTS
-        ? this.searchServices(searchTerms, {
-            minPrice,
-            maxPrice,
-            categories,
-            tags,
-            minRating,
-          })
-        : Promise.resolve([]),
-    ]);
+    // Search products and services based on type using full-text search
+    const filters = {
+      minPrice,
+      maxPrice,
+      categories,
+      tags,
+      hasOffer,
+      minRating,
+    };
+
+    const [productResults, storeProductResults, serviceResults] =
+      await Promise.all([
+        type !== SearchType.SERVICES && searchTerms.length > 0
+          ? this.fullTextSearch.searchProducts(searchTerms, filters)
+          : Promise.resolve([]),
+        type !== SearchType.SERVICES && searchTerms.length > 0
+          ? this.fullTextSearch.searchStoreProducts(searchTerms, filters)
+          : Promise.resolve([]),
+        type !== SearchType.PRODUCTS && searchTerms.length > 0
+          ? this.fullTextSearch.searchServices(searchTerms, filters)
+          : Promise.resolve([]),
+      ]);
 
     // Combine and score results
-    let allResults = [...productResults, ...serviceResults];
+    let allResults = [
+      ...productResults,
+      ...storeProductResults,
+      ...serviceResults,
+    ];
 
-    // Calculate relevance scores
-    allResults = allResults.map((item) => ({
-      ...item,
-      relevanceScore: this.calculateRelevanceScore(item, searchTerms),
-    }));
-
-    // Sort results
+    // Results already have relevance scores from full-text search
+    // Just re-sort if needed
     allResults = this.sortResults(allResults, sortBy);
 
     // Pagination
@@ -99,12 +107,13 @@ export class SearchService {
     const suggestions =
       totalItems < 5 ? await this.generateSuggestions(normalizedQuery) : [];
 
-    // Log search for analytics
-    await this.logSearch(query, totalItems);
+    // Log search for analytics and get searchId
+    const searchId = await this.logSearch(query, totalItems, userId, sessionId);
 
     const processingTimeMs = Date.now() - startTime;
 
     return {
+      searchId: searchId ?? undefined, // Convert null to undefined
       items: highlightedResults,
       pageInfo: {
         currentPage: page,
@@ -825,17 +834,132 @@ export class SearchService {
     }
   }
 
-  private async logSearch(query: string, resultCount: number): Promise<void> {
+  private async logSearch(
+    query: string,
+    resultCount: number,
+    userId?: string,
+    sessionId?: string
+  ): Promise<number | null> {
     try {
-      await this.prisma.searchLog.create({
+      const searchLog = await this.prisma.searchLog.create({
         data: {
           query: query.toLowerCase().trim(),
           resultCount,
+          userId,
+          sessionId,
           createdAt: new Date(),
         },
       });
+
+      // Update user search history (if table exists)
+      if (userId && this.prisma["userSearchHistory"]) {
+        await this.prisma["userSearchHistory"].create({
+          data: {
+            userId,
+            query: query.toLowerCase().trim(),
+            resultCount,
+            searchedAt: new Date(),
+          },
+        });
+      }
+
+      // Update popular searches (if table exists)
+      if (this.prisma["popularSearch"]) {
+        await this.prisma["popularSearch"].upsert({
+          where: { query: query.toLowerCase().trim() },
+          update: {
+            searchCount: { increment: 1 },
+            lastSearched: new Date(),
+          },
+          create: {
+            query: query.toLowerCase().trim(),
+            searchCount: 1,
+            clickCount: 0,
+          },
+        });
+      }
+
+      return searchLog.id;
     } catch {
       // Silently fail if table doesn't exist yet
+      return null;
+    }
+  }
+
+  async trackClick(input: TrackSearchClickInput): Promise<boolean> {
+    try {
+      await this.prisma.searchClick.create({
+        data: {
+          searchId: input.searchId,
+          itemId: input.itemId,
+          itemType: input.itemType,
+          position: input.position,
+          userId: input.userId,
+          clickedAt: new Date(),
+        },
+      });
+
+      // Update popular search click count
+      const searchLog = await this.prisma.searchLog.findUnique({
+        where: { id: input.searchId },
+      });
+
+      if (searchLog) {
+        await this.prisma.popularSearch.upsert({
+          where: { query: searchLog.query },
+          update: {
+            clickCount: { increment: 1 },
+            lastSearched: new Date(),
+          },
+          create: {
+            query: searchLog.query,
+            searchCount: 1,
+            clickCount: 1,
+          },
+        });
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async trackView(input: TrackItemViewInput): Promise<boolean> {
+    try {
+      await this.prisma.itemView.create({
+        data: {
+          itemId: input.itemId,
+          itemType: input.itemType,
+          userId: input.userId,
+          sessionId: input.sessionId,
+          duration: input.duration,
+          source: input.source,
+          viewedAt: new Date(),
+        },
+      });
+
+      // Update view count based on item type
+      if (input.itemType === "PRODUCT") {
+        await this.prisma.product.update({
+          where: { id: input.itemId },
+          data: { viewCount: { increment: 1 } },
+        });
+      } else if (input.itemType === "STORE_PRODUCT") {
+        await this.prisma.storeProduct.update({
+          where: { id: input.itemId },
+          data: { viewCount: { increment: 1 } },
+        });
+      } else if (input.itemType === "SERVICE") {
+        await this.prisma.service.update({
+          where: { id: input.itemId },
+          data: { viewCount: { increment: 1 } },
+        });
+      }
+
+      return true;
+    } catch {
+      return false;
     }
   }
 

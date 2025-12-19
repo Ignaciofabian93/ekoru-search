@@ -1,29 +1,35 @@
-import { Field, InputType, Int, Float, registerEnumType } from '@nestjs/graphql';
-import { IsOptional, IsString, Min, Max, IsArray } from 'class-validator';
+import {
+  Field,
+  InputType,
+  Int,
+  Float,
+  registerEnumType,
+} from "@nestjs/graphql";
+import { IsOptional, IsString, Min, Max, IsArray } from "class-validator";
 
 export enum SearchType {
-  ALL = 'ALL',
-  PRODUCTS = 'PRODUCTS',
-  SERVICES = 'SERVICES',
+  ALL = "ALL",
+  PRODUCTS = "PRODUCTS",
+  SERVICES = "SERVICES",
 }
 
 export enum SearchSortBy {
-  RELEVANCE = 'RELEVANCE',
-  PRICE_ASC = 'PRICE_ASC',
-  PRICE_DESC = 'PRICE_DESC',
-  NEWEST = 'NEWEST',
-  RATING = 'RATING',
-  POPULARITY = 'POPULARITY',
+  RELEVANCE = "RELEVANCE",
+  PRICE_ASC = "PRICE_ASC",
+  PRICE_DESC = "PRICE_DESC",
+  NEWEST = "NEWEST",
+  RATING = "RATING",
+  POPULARITY = "POPULARITY",
 }
 
 registerEnumType(SearchType, {
-  name: 'SearchType',
-  description: 'Type of items to search for',
+  name: "SearchType",
+  description: "Type of items to search for",
 });
 
 registerEnumType(SearchSortBy, {
-  name: 'SearchSortBy',
-  description: 'Sort order for search results',
+  name: "SearchSortBy",
+  description: "Sort order for search results",
 });
 
 @InputType()
@@ -124,4 +130,56 @@ export class AutocompleteInput {
   @Field(() => SearchType, { defaultValue: SearchType.ALL })
   @IsOptional()
   type?: SearchType = SearchType.ALL;
+}
+
+@InputType()
+export class TrackSearchClickInput {
+  @Field(() => Int)
+  searchId: number;
+
+  @Field(() => Int)
+  itemId: number;
+
+  @Field(() => String)
+  @IsString()
+  itemType: string;
+
+  @Field(() => Int)
+  @Min(1)
+  position: number;
+
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  userId?: string;
+}
+
+@InputType()
+export class TrackItemViewInput {
+  @Field(() => Int)
+  itemId: number;
+
+  @Field(() => String)
+  @IsString()
+  itemType: string;
+
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  sessionId?: string;
+
+  @Field(() => Int, { nullable: true })
+  @IsOptional()
+  @Min(0)
+  duration?: number;
+
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  source?: string;
 }

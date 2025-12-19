@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { GraphQLModule } from "@nestjs/graphql";
+import { ScheduleModule } from "@nestjs/schedule";
 import {
   ApolloFederationDriver,
   ApolloFederationDriverConfig,
@@ -22,6 +23,9 @@ import { HealthController } from "./health/health.controller";
       isGlobal: true,
       load: [configuration],
     }),
+
+    // Schedule for cron jobs
+    ScheduleModule.forRoot(),
 
     // GraphQL Federation
     GraphQLModule.forRoot<ApolloFederationDriverConfig>({

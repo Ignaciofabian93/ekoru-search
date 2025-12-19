@@ -863,6 +863,7 @@ model Product {
   condition                                     ProductCondition @default(NEW)
   conditionDescription                          String?
   deletedAt                                     DateTime? // Soft delete - null means active
+  viewCount                                     Int              @default(0)
   chat                                          Chat[]
   exchange_Exchange_offeredProductIdToProduct   Exchange[]       @relation("Exchange_offeredProductIdToProduct")
   exchange_Exchange_requestedProductIdToProduct Exchange[]       @relation("Exchange_requestedProductIdToProduct")
@@ -882,6 +883,7 @@ model Product {
   @@index([createdAt(sort: Desc), isActive]) // Recent active products
   @@index([hasOffer, isActive]) // Products on offer
   @@index([deletedAt]) // Filter out soft-deleted products
+  @@index([viewCount])
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -931,6 +933,8 @@ model StoreProduct {
   recycledContent     Float?
   subcategoryId       Int
   deletedAt           DateTime? // Soft delete - null means active
+  viewCount           Int       @default(0)
+  saleCount           Int       @default(0)
 
   // Environmental impact metrics (calculated from materials)
   sustainabilityScore Int? // 0-100 score based on materials + certifications
@@ -942,6 +946,7 @@ model StoreProduct {
   seller           Seller                 @relation(fields: [sellerId], references: [id])
   productComment   ProductComment[]
   productLike      ProductLike[]
+  reviews          StoreProductReview[]
 
   @@index([sellerId])
   @@index([subcategoryId])
@@ -953,6 +958,8 @@ model StoreProduct {
   @@index([createdAt(sort: Desc), isActive]) // Recent products
   @@index([ratings(sort: Desc), isActive]) // Top rated products
   @@index([deletedAt]) // Filter out soft-deleted products
+  @@index([viewCount])
+  @@index([saleCount])
 }
 
 // NEW: Junction table for store products (upcycled - new from recycled materials)
@@ -1034,6 +1041,8 @@ model Service {
   tags            String[]
   createdAt       DateTime           @default(now())
   updatedAt       DateTime
+  viewCount       Int                @default(0)
+  averageRating   Float?             @default(0)
   quotation       Quotation[]
   advertisement   Advertisement[]
   serviceCategory ServiceSubCategory @relation(fields: [subcategoryId], references: [id])
@@ -1048,6 +1057,8 @@ model Service {
   @@index([subcategoryId, isActive]) // Active services by category
   @@index([sellerId, isActive, pricingType]) // Filter services by seller, status, and pricing
   @@index([createdAt(sort: Desc), isActive]) // Recent active services
+  @@index([viewCount])
+  @@index([averageRating])
 }
 
 model ServiceReview {
@@ -1543,16 +1554,117 @@ model Story {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 model SearchLog {
-  id          Int      @id @default(autoincrement())
+  id          Int           @id @default(autoincrement())
   query       String
-  resultCount Int      @default(0)
+  resultCount Int           @default(0)
   userId      String?
   sessionId   String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime      @default(now())
+  clicks      SearchClick[]
 
   @@index([query])
   @@index([createdAt(sort: Desc)])
   @@index([userId])
+  @@index([sessionId])
+}
+
+model SearchClick {
+  id        Int       @id @default(autoincrement())
+  searchId  Int
+  itemId    Int
+  itemType  String // PRODUCT, SERVICE, STORE_PRODUCT
+  position  Int // Position in results (1-based)
+  clickedAt DateTime  @default(now())
+  userId    String?
+  searchLog SearchLog @relation(fields: [searchId], references: [id], onDelete: Cascade)
+
+  @@index([searchId])
+  @@index([itemId, itemType])
+  @@index([clickedAt])
+  @@index([userId])
+}
+
+model ItemView {
+  id        Int      @id @default(autoincrement())
+  userId    String?
+  sessionId String?
+  itemId    Int
+  itemType  String // PRODUCT, SERVICE, STORE_PRODUCT
+  viewedAt  DateTime @default(now())
+  duration  Int? // Time spent viewing in seconds
+  source    String? // search, recommendation, direct, etc.
+
+  @@index([userId, viewedAt(sort: Desc)])
+  @@index([sessionId, viewedAt(sort: Desc)])
+  @@index([itemId, itemType])
+  @@index([viewedAt])
+}
+
+model UserSearchHistory {
+  id          Int      @id @default(autoincrement())
+  userId      String
+  query       String
+  resultCount Int      @default(0)
+  searchedAt  DateTime @default(now())
+
+  @@index([userId, searchedAt(sort: Desc)])
+  @@index([query])
+}
+
+model SearchSession {
+  id             String    @id @default(cuid())
+  userId         String?
+  sessionId      String
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  searchCount    Int       @default(0)
+  clickedResults Int       @default(0)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([startedAt])
+}
+
+model SearchCorrection {
+  id            Int      @id @default(autoincrement())
+  incorrectTerm String
+  correctTerm   String
+  frequency     Int      @default(1)
+  confidence    Float    @default(1.0) // 0-1 confidence score
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([incorrectTerm, correctTerm])
+  @@index([incorrectTerm])
+  @@index([frequency(sort: Desc)])
+  @@index([isActive])
+}
+
+model SearchSynonym {
+  id        Int      @id @default(autoincrement())
+  term      String
+  synonym   String
+  weight    Float    @default(1.0) // Relevance weight
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([term, synonym])
+  @@index([term])
+  @@index([isActive])
+}
+
+model PopularSearch {
+  id            Int      @id @default(autoincrement())
+  query         String   @unique
+  searchCount   Int      @default(0)
+  clickCount    Int      @default(0)
+  lastSearched  DateTime @default(now())
+  trendingScore Float    @default(0) // Calculated score
+
+  @@index([trendingScore(sort: Desc)])
+  @@index([lastSearched(sort: Desc)])
+  @@index([searchCount(sort: Desc)])
 }
 
 model SearchSuggestion {
@@ -1566,4 +1678,24 @@ model SearchSuggestion {
   @@index([term])
   @@index([frequency(sort: Desc)])
   @@index([isActive])
+}
+
+model StoreProductReview {
+  id                 Int          @id @default(autoincrement())
+  storeProductId     Int
+  userId             String
+  rating             Int // 1-5
+  comment            String?
+  images             String[] // Review images
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  isVerifiedPurchase Boolean      @default(false)
+  helpfulCount       Int          @default(0)
+  storeProduct       StoreProduct @relation(fields: [storeProductId], references: [id], onDelete: Cascade)
+
+  @@unique([storeProductId, userId])
+  @@index([storeProductId])
+  @@index([rating])
+  @@index([createdAt])
+  @@index([isVerifiedPurchase])
 }
