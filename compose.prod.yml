@@ -1,0 +1,40 @@
+services:
+  ekoru-search:
+    image: ekoru-search:prod
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    container_name: ekoru-search
+    env_file:
+      - .env.prod
+    ports:
+      - "4105:4005"
+    networks:
+      - ekoru-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0" # Maximum 1 CPU core
+          memory: 512M # Maximum 512MB RAM
+        reservations:
+          cpus: "0.25" # Minimum 0.25 CPU cores reserved
+          memory: 256M # Minimum 256MB RAM reserved
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:4105/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  ekoru-network:
+    external: true
