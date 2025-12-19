@@ -85,8 +85,13 @@ export class SearchService {
       ...serviceResults,
     ];
 
-    // Results already have relevance scores from full-text search
-    // Just re-sort if needed
+    // Calculate relevance scores for each result
+    allResults = allResults.map((item) => ({
+      ...item,
+      relevanceScore: this.calculateRelevanceScore(item, searchTerms),
+    }));
+
+    // Sort results
     allResults = this.sortResults(allResults, sortBy);
 
     // Pagination

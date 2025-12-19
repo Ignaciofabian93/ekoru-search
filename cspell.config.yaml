@@ -3,7 +3,21 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - busc
+  - comput
+  - Ekoru
   - fulltext
+  - laptap
+  - nvidia
+  - pgvector
+  - plainto
   - sáéíóúñü
+  - sess
+  - setex
+  - spanish
+  - trgm
+  - tsquery
+  - tsvector
+  - upcycled
 ignoreWords: []
 import: []
