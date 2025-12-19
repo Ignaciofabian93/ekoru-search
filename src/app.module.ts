@@ -1,22 +1,19 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { GraphQLModule } from '@nestjs/graphql';
+import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
+import { GraphQLModule } from "@nestjs/graphql";
 import {
   ApolloFederationDriver,
   ApolloFederationDriverConfig,
-} from '@nestjs/apollo';
-import { Request, Response } from 'express';
-import { PrismaModule } from './prisma/prisma.module';
-import { CatalogModule } from './catalog/catalog.module';
-import { ServicesModule } from './services/services.module';
-import { QuotationsModule } from './quotations/quotations.module';
-import { ReviewsModule } from './reviews/reviews.module';
-import { DateTimeScalar, JSONScalar } from './graphql/scalars';
-import configuration from './config/configuration';
+} from "@nestjs/apollo";
+import { Request, Response } from "express";
+import { PrismaModule } from "./prisma/prisma.module";
+import { SearchModule } from "./search/search.module";
+import { DateTimeScalar, JSONScalar } from "./graphql/scalars";
+import configuration from "./config/configuration";
 
 // Import to register enums
-import './graphql/enums';
-import { HealthController } from './health/health.controller';
+import "./graphql/enums";
+import { HealthController } from "./health/health.controller";
 
 @Module({
   imports: [
@@ -33,15 +30,15 @@ import { HealthController } from './health/health.controller';
         federation: 2,
       },
       sortSchema: true,
-      playground: process.env.NODE_ENV !== 'production',
+      playground: process.env.NODE_ENV !== "production",
       context: ({ req, res }: { req: Request; res: Response }) => ({
         req,
         res,
-        sellerId: req.headers['x-seller-id'] as string,
-        token: req.headers.authorization?.replace('Bearer ', '') as string,
+        sellerId: req.headers["x-seller-id"] as string,
+        token: req.headers.authorization?.replace("Bearer ", "") as string,
       }),
       formatError: (error) => {
-        if (process.env.NODE_ENV === 'production') {
+        if (process.env.NODE_ENV === "production") {
           delete error.extensions?.exception;
         }
         return error;
@@ -52,10 +49,7 @@ import { HealthController } from './health/health.controller';
     PrismaModule,
 
     // Feature modules
-    CatalogModule,
-    ServicesModule,
-    QuotationsModule,
-    ReviewsModule,
+    SearchModule,
   ],
   controllers: [HealthController],
   providers: [DateTimeScalar, JSONScalar],
