@@ -1581,20 +1581,6 @@ ENABLE_TRENDING_JOBS=true
 - [ ] **Voice Search**: Audio query processing
 - [ ] **Image Search**: Visual search for products
 
-### Contributing
-
-See `CONTRIBUTING.md` for development guidelines.
-
-## License
-
-MIT License - see `LICENSE` file for details.
-
-## Support
-
-- **Documentation**: This README
-- **Issues**: GitHub Issues
-- **Email**: support@ekoru.com
-
 ---
 
 **Last Updated**: December 2025  
