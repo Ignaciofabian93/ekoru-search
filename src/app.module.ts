@@ -15,9 +15,16 @@ import configuration from "./config/configuration";
 // Import to register enums
 import "./graphql/enums";
 import { HealthController } from "./health/health.controller";
+import { PrometheusModule } from "@willsoto/nestjs-prometheus";
 
 @Module({
   imports: [
+    // Metrics
+    PrometheusModule.register({
+      path: '/metrics',
+      defaultMetrics: { enabled: true },
+    }),
+
     // Configuration
     ConfigModule.forRoot({
       isGlobal: true,

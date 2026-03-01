@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   SearchInput,
@@ -27,13 +28,13 @@ import { FullTextSearchStrategy } from "./strategies/fulltext-search.strategy";
 export class SearchService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly fullTextSearch: FullTextSearchStrategy
+    private readonly fullTextSearch: FullTextSearchStrategy,
   ) {}
 
   async search(
     input: SearchInput,
     userId?: string,
-    sessionId?: string
+    sessionId?: string,
   ): Promise<SearchResponse> {
     const startTime = Date.now();
     const {
@@ -102,7 +103,7 @@ export class SearchService {
 
     // Add highlighting
     const highlightedResults = paginatedResults.map((item) =>
-      this.addHighlighting(item, searchTerms)
+      this.addHighlighting(item, searchTerms),
     );
 
     // Generate facets
@@ -153,29 +154,26 @@ export class SearchService {
 
     // Search for matching products
     if (type !== SearchType.SERVICES) {
-      const products = await this.prisma.product.findMany({
-        where: {
-          isActive: true,
-          deletedAt: null,
-          OR: [
-            { name: { contains: normalizedQuery, mode: "insensitive" } },
-            { brand: { contains: normalizedQuery, mode: "insensitive" } },
-          ],
-        },
-        select: {
-          id: true,
-          name: true,
-          productCategory: { select: { productCategoryName: true } },
-        },
-        take: Math.floor(limit / 2),
-      });
+      const productPattern = `%${normalizedQuery}%`;
+      const productTake = Math.floor(limit / 2);
+      const products = await this.prisma.$queryRaw<
+        { id: number; name: string; category: string | null }[]
+      >`
+        SELECT p.id, p.name, pc."productCategoryName" as category
+        FROM "Product" p
+        LEFT JOIN "ProductCategory" pc ON p."productCategoryId" = pc.id
+        WHERE p."isActive" = true
+          AND p."deletedAt" IS NULL
+          AND (p.name ILIKE ${productPattern} OR p.brand ILIKE ${productPattern})
+        LIMIT ${Prisma.raw(String(productTake))}
+      `;
 
       products.forEach((p) => {
         suggestions.push({
           text: p.name,
           type: SearchResultType.PRODUCT,
           itemId: p.id,
-          category: p.productCategory?.productCategoryName,
+          category: p.category ?? undefined,
           score: this.calculateAutocompleteScore(p.name, normalizedQuery),
         });
       });
@@ -183,28 +181,24 @@ export class SearchService {
 
     // Search for matching services
     if (type !== SearchType.PRODUCTS) {
-      const services = await this.prisma.service.findMany({
-        where: {
-          isActive: true,
-          OR: [
-            { name: { contains: normalizedQuery, mode: "insensitive" } },
-            { tags: { hasSome: [normalizedQuery] } },
-          ],
-        },
-        select: {
-          id: true,
-          name: true,
-          serviceCategory: { select: { subCategory: true } },
-        },
-        take: Math.floor(limit / 2),
-      });
+      const servicePattern = `%${normalizedQuery}%`;
+      const serviceTake = Math.floor(limit / 2);
+      const services = await this.prisma.$queryRaw<
+        { id: number; name: string }[]
+      >`
+        SELECT id, name
+        FROM "Service"
+        WHERE "isActive" = true
+          AND (name ILIKE ${servicePattern} OR ${normalizedQuery} = ANY(tags))
+        LIMIT ${Prisma.raw(String(serviceTake))}
+      `;
 
       services.forEach((s) => {
         suggestions.push({
           text: s.name,
           type: SearchResultType.SERVICE,
           itemId: s.id,
-          category: s.serviceCategory?.subCategory,
+          category: undefined,
           score: this.calculateAutocompleteScore(s.name, normalizedQuery),
         });
       });
@@ -221,7 +215,7 @@ export class SearchService {
   }
 
   async getRecommendations(
-    input: RecommendationInput
+    input: RecommendationInput,
   ): Promise<RecommendationResponse> {
     const { query, viewedProductIds, viewedServiceIds, limit = 10 } = input;
     const recommendations: RecommendationItem[] = [];
@@ -263,32 +257,58 @@ export class SearchService {
 
     // Based on viewed products - similar category items
     if (viewedProductIds && viewedProductIds.length > 0) {
-      const viewedProducts = await this.prisma.product.findMany({
-        where: { id: { in: viewedProductIds } },
-        select: { productCategoryId: true, interests: true },
-      });
+      const viewedProducts = await this.prisma.$queryRaw<
+        { productCategoryId: number; interests: string[] }[]
+      >`
+        SELECT "productCategoryId", interests
+        FROM "Product"
+        WHERE id = ANY(${viewedProductIds})
+      `;
 
       const categoryIds = [
-        ...new Set(viewedProducts.map((p) => p.productCategoryId)),
+        ...new Set(viewedProducts.map((p) => Number(p.productCategoryId))),
       ];
       const interests = [
         ...new Set(viewedProducts.flatMap((p) => p.interests || [])),
       ];
 
-      const similarProducts = await this.prisma.product.findMany({
-        where: {
-          isActive: true,
-          deletedAt: null,
-          id: { notIn: viewedProductIds },
-          OR: [
-            { productCategoryId: { in: categoryIds } },
-            { interests: { hasSome: interests } },
-          ],
-        },
-        include: { productCategory: true, seller: true },
-        take: Math.floor(limit / 2),
-        orderBy: { createdAt: "desc" },
-      });
+      const simProductLimit = Math.floor(limit / 2);
+      let similarProducts: {
+        id: number;
+        name: string;
+        description: string | null;
+        price: number;
+        images: string[];
+      }[] = [];
+
+      if (categoryIds.length > 0 || interests.length > 0) {
+        const catFilter =
+          categoryIds.length > 0
+            ? Prisma.sql`p."productCategoryId" = ANY(${categoryIds})`
+            : Prisma.sql`false`;
+        const intFilter =
+          interests.length > 0
+            ? Prisma.sql`p.interests && ${interests}`
+            : Prisma.sql`false`;
+        similarProducts = await this.prisma.$queryRaw<
+          {
+            id: number;
+            name: string;
+            description: string | null;
+            price: number;
+            images: string[];
+          }[]
+        >`
+          SELECT p.id, p.name, p.description, p.price, p.images
+          FROM "Product" p
+          WHERE p."isActive" = true
+            AND p."deletedAt" IS NULL
+            AND p.id != ALL(${viewedProductIds})
+            AND (${catFilter} OR ${intFilter})
+          ORDER BY p."createdAt" DESC
+          LIMIT ${Prisma.raw(String(simProductLimit))}
+        `;
+      }
 
       similarProducts.forEach((p) => {
         recommendations.push({
@@ -307,29 +327,55 @@ export class SearchService {
 
     // Based on viewed services - similar subcategory
     if (viewedServiceIds && viewedServiceIds.length > 0) {
-      const viewedServices = await this.prisma.service.findMany({
-        where: { id: { in: viewedServiceIds } },
-        select: { subcategoryId: true, tags: true },
-      });
+      const viewedServices = await this.prisma.$queryRaw<
+        { subcategoryId: number; tags: string[] }[]
+      >`
+        SELECT "subcategoryId", tags
+        FROM "Service"
+        WHERE id = ANY(${viewedServiceIds})
+      `;
 
       const subcategoryIds = [
-        ...new Set(viewedServices.map((s) => s.subcategoryId)),
+        ...new Set(viewedServices.map((s) => Number(s.subcategoryId))),
       ];
       const allTags = [...new Set(viewedServices.flatMap((s) => s.tags || []))];
 
-      const similarServices = await this.prisma.service.findMany({
-        where: {
-          isActive: true,
-          id: { notIn: viewedServiceIds },
-          OR: [
-            { subcategoryId: { in: subcategoryIds } },
-            { tags: { hasSome: allTags } },
-          ],
-        },
-        include: { serviceCategory: true, seller: true },
-        take: Math.floor(limit / 2),
-        orderBy: { createdAt: "desc" },
-      });
+      const simServiceLimit = Math.floor(limit / 2);
+      let similarServices: {
+        id: number;
+        name: string;
+        description: string | null;
+        basePrice: number | null;
+        images: string[];
+      }[] = [];
+
+      if (subcategoryIds.length > 0 || allTags.length > 0) {
+        const subFilter =
+          subcategoryIds.length > 0
+            ? Prisma.sql`s."subcategoryId" = ANY(${subcategoryIds})`
+            : Prisma.sql`false`;
+        const tagFilter =
+          allTags.length > 0
+            ? Prisma.sql`s.tags && ${allTags}`
+            : Prisma.sql`false`;
+        similarServices = await this.prisma.$queryRaw<
+          {
+            id: number;
+            name: string;
+            description: string | null;
+            basePrice: number | null;
+            images: string[];
+          }[]
+        >`
+          SELECT s.id, s.name, s.description, s."basePrice", s.images
+          FROM "Service" s
+          WHERE s."isActive" = true
+            AND s.id != ALL(${viewedServiceIds})
+            AND (${subFilter} OR ${tagFilter})
+          ORDER BY s."createdAt" DESC
+          LIMIT ${Prisma.raw(String(simServiceLimit))}
+        `;
+      }
 
       similarServices.forEach((s) => {
         recommendations.push({
@@ -376,12 +422,21 @@ export class SearchService {
     }));
 
     // Get trending products (most viewed/sold recently)
-    const trendingProducts = await this.prisma.product.findMany({
-      where: { isActive: true, deletedAt: null },
-      include: { productCategory: true },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-    });
+    const trendingProducts = await this.prisma.$queryRaw<
+      {
+        id: number;
+        name: string;
+        description: string | null;
+        price: number;
+        images: string[];
+      }[]
+    >`
+      SELECT p.id, p.name, p.description, p.price, p.images
+      FROM "Product" p
+      WHERE p."isActive" = true AND p."deletedAt" IS NULL
+      ORDER BY p."createdAt" DESC
+      LIMIT 6
+    `;
 
     const products: RecommendationItem[] = trendingProducts.map((p) => ({
       id: p.id,
@@ -396,12 +451,21 @@ export class SearchService {
     }));
 
     // Get trending services
-    const trendingServices = await this.prisma.service.findMany({
-      where: { isActive: true },
-      include: { serviceCategory: true },
-      orderBy: { createdAt: "desc" },
-      take: 6,
-    });
+    const trendingServices = await this.prisma.$queryRaw<
+      {
+        id: number;
+        name: string;
+        description: string | null;
+        basePrice: number | null;
+        images: string[];
+      }[]
+    >`
+      SELECT id, name, description, "basePrice", images
+      FROM "Service"
+      WHERE "isActive" = true
+      ORDER BY "createdAt" DESC
+      LIMIT 6
+    `;
 
     const services: RecommendationItem[] = trendingServices.map((s) => ({
       id: s.id,
@@ -475,69 +539,9 @@ export class SearchService {
       tags?: string[];
       hasOffer?: boolean;
       minRating?: number;
-    }
+    },
   ): Promise<SearchResultItem[]> {
-    if (searchTerms.length === 0) return [];
-
-    const whereConditions: any[] = searchTerms.map((term) => ({
-      OR: [
-        { name: { contains: term, mode: "insensitive" } },
-        { description: { contains: term, mode: "insensitive" } },
-        { brand: { contains: term, mode: "insensitive" } },
-        { productCategory: { keywords: { hasSome: [term] } } },
-        {
-          productCategory: {
-            productCategoryName: { contains: term, mode: "insensitive" },
-          },
-        },
-      ],
-    }));
-
-    const where: any = {
-      isActive: true,
-      deletedAt: null,
-      AND: whereConditions,
-    };
-
-    // Apply filters
-    if (filters.minPrice !== undefined) {
-      where.price = { ...where.price, gte: filters.minPrice };
-    }
-    if (filters.maxPrice !== undefined) {
-      where.price = { ...where.price, lte: filters.maxPrice };
-    }
-    if (filters.hasOffer !== undefined) {
-      where.hasOffer = filters.hasOffer;
-    }
-
-    const products = await this.prisma.product.findMany({
-      where,
-      include: {
-        productCategory: true,
-        seller: {
-          select: { id: true, personProfile: true, businessProfile: true },
-        },
-      },
-      take: 100,
-    });
-
-    return products.map((p) => ({
-      id: p.id,
-      type: SearchResultType.PRODUCT,
-      name: p.name,
-      description: p.description || undefined,
-      price: p.price,
-      offerPrice: p.offerPrice || undefined,
-      hasOffer: p.hasOffer,
-      images: p.images || [],
-      category: p.productCategory?.productCategoryName,
-      subcategory: undefined,
-      rating: undefined,
-      reviewCount: undefined,
-      sellerId: p.sellerId,
-      tags: p.interests || [],
-      relevanceScore: 0,
-    }));
+    return this.fullTextSearch.searchProducts(searchTerms, filters);
   }
 
   private async searchServices(
@@ -548,68 +552,14 @@ export class SearchService {
       categories?: string[];
       tags?: string[];
       minRating?: number;
-    }
+    },
   ): Promise<SearchResultItem[]> {
-    if (searchTerms.length === 0) return [];
-
-    const whereConditions: any[] = searchTerms.map((term) => ({
-      OR: [
-        { name: { contains: term, mode: "insensitive" } },
-        { description: { contains: term, mode: "insensitive" } },
-        { tags: { hasSome: [term] } },
-        {
-          subcategory: { subCategory: { contains: term, mode: "insensitive" } },
-        },
-      ],
-    }));
-
-    const where: any = {
-      isActive: true,
-      AND: whereConditions,
-    };
-
-    // Apply filters
-    if (filters.minPrice !== undefined) {
-      where.basePrice = { ...where.basePrice, gte: filters.minPrice };
-    }
-    if (filters.maxPrice !== undefined) {
-      where.basePrice = { ...where.basePrice, lte: filters.maxPrice };
-    }
-    if (filters.minRating !== undefined) {
-      where.averageRating = { gte: filters.minRating };
-    }
-
-    const services = await this.prisma.service.findMany({
-      where,
-      include: {
-        serviceCategory: { include: { serviceCategory: true } },
-        seller: {
-          select: { id: true, personProfile: true, businessProfile: true },
-        },
-      },
-      take: 100,
-    });
-
-    return services.map((s) => ({
-      id: s.id,
-      type: SearchResultType.SERVICE,
-      name: s.name,
-      description: s.description || undefined,
-      price: s.basePrice || undefined,
-      offerPrice: undefined,
-      hasOffer: false,
-      images: s.images || [],
-      category: s.serviceCategory?.serviceCategory?.category,
-      subcategory: s.serviceCategory?.subCategory,
-      sellerId: s.sellerId,
-      tags: s.tags || [],
-      relevanceScore: 0,
-    }));
+    return this.fullTextSearch.searchServices(searchTerms, filters);
   }
 
   private calculateRelevanceScore(
     item: SearchResultItem,
-    searchTerms: string[]
+    searchTerms: string[],
   ): number {
     let score = 0;
     const nameNormalized = item.name.toLowerCase();
@@ -644,7 +594,7 @@ export class SearchService {
 
   private sortResults(
     results: SearchResultItem[],
-    sortBy: SearchSortBy
+    sortBy: SearchSortBy,
   ): SearchResultItem[] {
     switch (sortBy) {
       case SearchSortBy.RELEVANCE:
@@ -659,7 +609,7 @@ export class SearchService {
         return results; // Would need createdAt field
       case SearchSortBy.POPULARITY:
         return results.sort(
-          (a, b) => (b.reviewCount || 0) - (a.reviewCount || 0)
+          (a, b) => (b.reviewCount || 0) - (a.reviewCount || 0),
         );
       default:
         return results;
@@ -668,7 +618,7 @@ export class SearchService {
 
   private addHighlighting(
     item: SearchResultItem,
-    searchTerms: string[]
+    searchTerms: string[],
   ): SearchResultItem {
     let highlightedName = item.name;
     let highlightedDescription = item.description || "";
@@ -678,7 +628,7 @@ export class SearchService {
       highlightedName = highlightedName.replace(regex, "<mark>$1</mark>");
       highlightedDescription = highlightedDescription.replace(
         regex,
-        "<mark>$1</mark>"
+        "<mark>$1</mark>",
       );
     }
 
@@ -699,7 +649,7 @@ export class SearchService {
       if (item.category) {
         categoryCount.set(
           item.category,
-          (categoryCount.get(item.category) || 0) + 1
+          (categoryCount.get(item.category) || 0) + 1,
         );
       }
 
@@ -730,7 +680,7 @@ export class SearchService {
   }
 
   private generatePriceRanges(
-    results: SearchResultItem[]
+    results: SearchResultItem[],
   ): { name: string; count: number }[] {
     const ranges = [
       { name: "$0 - $10,000", min: 0, max: 10000 },
@@ -743,7 +693,7 @@ export class SearchService {
       name: range.name,
       count: results.filter(
         (r) =>
-          r.price !== undefined && r.price >= range.min && r.price < range.max
+          r.price !== undefined && r.price >= range.min && r.price < range.max,
       ).length,
     }));
   }
@@ -756,17 +706,13 @@ export class SearchService {
 
   private async generateSuggestions(query: string): Promise<string[]> {
     // Get similar product/service names
-    const products = await this.prisma.product.findMany({
-      where: { isActive: true, deletedAt: null },
-      select: { name: true },
-      take: 100,
-    });
+    const products = await this.prisma.$queryRaw<{ name: string }[]>`
+      SELECT name FROM "Product" WHERE "isActive" = true AND "deletedAt" IS NULL LIMIT 100
+    `;
 
-    const services = await this.prisma.service.findMany({
-      where: { isActive: true },
-      select: { name: true },
-      take: 100,
-    });
+    const services = await this.prisma.$queryRaw<{ name: string }[]>`
+      SELECT name FROM "Service" WHERE "isActive" = true LIMIT 100
+    `;
 
     const allNames = [
       ...products.map((p) => p.name),
@@ -843,7 +789,7 @@ export class SearchService {
     query: string,
     resultCount: number,
     userId?: string,
-    sessionId?: string
+    sessionId?: string,
   ): Promise<number | null> {
     try {
       const searchLog = await this.prisma.searchLog.create({
@@ -932,34 +878,19 @@ export class SearchService {
 
   async trackView(input: TrackItemViewInput): Promise<boolean> {
     try {
-      await this.prisma.itemView.create({
-        data: {
-          itemId: input.itemId,
-          itemType: input.itemType,
-          userId: input.userId,
-          sessionId: input.sessionId,
-          duration: input.duration,
-          source: input.source,
-          viewedAt: new Date(),
-        },
-      });
-
-      // Update view count based on item type
+      // Update view count based on item type using raw SQL (cross-schema query)
       if (input.itemType === "PRODUCT") {
-        await this.prisma.product.update({
-          where: { id: input.itemId },
-          data: { viewCount: { increment: 1 } },
-        });
+        await this.prisma.$executeRaw`
+          UPDATE "Product" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
+        `;
       } else if (input.itemType === "STORE_PRODUCT") {
-        await this.prisma.storeProduct.update({
-          where: { id: input.itemId },
-          data: { viewCount: { increment: 1 } },
-        });
+        await this.prisma.$executeRaw`
+          UPDATE "StoreProduct" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
+        `;
       } else if (input.itemType === "SERVICE") {
-        await this.prisma.service.update({
-          where: { id: input.itemId },
-          data: { viewCount: { increment: 1 } },
-        });
+        await this.prisma.$executeRaw`
+          UPDATE "Service" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
+        `;
       }
 
       return true;
@@ -969,7 +900,7 @@ export class SearchService {
   }
 
   private deduplicateRecommendations(
-    items: RecommendationItem[]
+    items: RecommendationItem[],
   ): RecommendationItem[] {
     const seen = new Set<string>();
     return items.filter((item) => {
