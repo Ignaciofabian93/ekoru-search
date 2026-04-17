@@ -1,17 +1,19 @@
+name: ekoru-search-staging
+
 services:
-  ekoru-search-qa:
-    image: ekoru-search:qa
+  ekoru-search-staging:
+    image: ekoru-search:staging
     build:
       context: .
       dockerfile: Dockerfile
     restart: always
-    container_name: ekoru-search-qa
+    container_name: ekoru-search-staging
     env_file:
-      - .env.qa
+      - .env.staging
     ports:
-      - "4005:4005"
+      - "4006:4006"
     networks:
-      - ekoru-network
+      - ekoru-staging-network
     deploy:
       resources:
         limits:
@@ -28,7 +30,7 @@ services:
           "--quiet",
           "--tries=1",
           "--spider",
-          "http://localhost:4005/health",
+          "http://localhost:4006/health",
         ]
       interval: 30s
       timeout: 10s
@@ -36,5 +38,5 @@ services:
       start_period: 40s
 
 networks:
-  ekoru-network:
+  ekoru-staging-network:
     external: true
