@@ -1,10 +1,10 @@
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { Prisma } from "@prisma/client";
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import {
   SearchResultItem,
   SearchResultType,
-} from "../entities/search-result.entity";
+} from '../entities/search-result.entity';
 
 @Injectable()
 export class FullTextSearchStrategy {
@@ -19,9 +19,10 @@ export class FullTextSearchStrategy {
       tags?: string[];
       hasOffer?: boolean;
       minRating?: number;
-    }
+      excludeSellerId?: string;
+    },
   ): Promise<SearchResultItem[]> {
-    const searchQuery = searchTerms.join(" & ");
+    const searchQuery = searchTerms.join(' & ');
 
     const minPriceCondition = filters.minPrice
       ? Prisma.sql`AND p.price >= ${filters.minPrice}`
@@ -33,6 +34,10 @@ export class FullTextSearchStrategy {
       filters.hasOffer !== undefined
         ? Prisma.sql`AND p."hasOffer" = ${filters.hasOffer}`
         : Prisma.empty;
+    // Hide the current user's own products from their search results.
+    const excludeSellerCondition = filters.excludeSellerId
+      ? Prisma.sql`AND p."sellerId" <> ${filters.excludeSellerId}`
+      : Prisma.empty;
 
     const products = await this.prisma.$queryRaw<any[]>`
       SELECT 
@@ -64,6 +69,7 @@ export class FullTextSearchStrategy {
         ${minPriceCondition}
         ${maxPriceCondition}
         ${hasOfferCondition}
+        ${excludeSellerCondition}
       ORDER BY relevance_score DESC, p."createdAt" DESC
       LIMIT 100
     `;
@@ -99,9 +105,10 @@ export class FullTextSearchStrategy {
       tags?: string[];
       hasOffer?: boolean;
       minRating?: number;
-    }
+      excludeSellerId?: string;
+    },
   ): Promise<SearchResultItem[]> {
-    const searchQuery = searchTerms.join(" & ");
+    const searchQuery = searchTerms.join(' & ');
 
     const minPriceCondition = filters.minPrice
       ? Prisma.sql`AND sp.price >= ${filters.minPrice}`
@@ -115,6 +122,10 @@ export class FullTextSearchStrategy {
         : Prisma.empty;
     const minRatingCondition = filters.minRating
       ? Prisma.sql`AND sp.ratings >= ${filters.minRating}`
+      : Prisma.empty;
+    // Hide the current user's own store products from their search results.
+    const excludeSellerCondition = filters.excludeSellerId
+      ? Prisma.sql`AND sp."sellerId" <> ${filters.excludeSellerId}`
       : Prisma.empty;
 
     const storeProducts = await this.prisma.$queryRaw<any[]>`
@@ -152,6 +163,7 @@ export class FullTextSearchStrategy {
         ${maxPriceCondition}
         ${hasOfferCondition}
         ${minRatingCondition}
+        ${excludeSellerCondition}
       ORDER BY relevance_score DESC, sp."createdAt" DESC
       LIMIT 100
     `;
@@ -186,9 +198,10 @@ export class FullTextSearchStrategy {
       categories?: string[];
       tags?: string[];
       minRating?: number;
-    }
+      excludeSellerId?: string;
+    },
   ): Promise<SearchResultItem[]> {
-    const searchQuery = searchTerms.join(" & ");
+    const searchQuery = searchTerms.join(' & ');
 
     const minPriceCondition = filters.minPrice
       ? Prisma.sql`AND s."basePrice" >= ${filters.minPrice}`
@@ -198,6 +211,10 @@ export class FullTextSearchStrategy {
       : Prisma.empty;
     const minRatingCondition = filters.minRating
       ? Prisma.sql`AND s."averageRating" >= ${filters.minRating}`
+      : Prisma.empty;
+    // Hide the current user's own services from their search results.
+    const excludeSellerCondition = filters.excludeSellerId
+      ? Prisma.sql`AND s."sellerId" <> ${filters.excludeSellerId}`
       : Prisma.empty;
 
     const services = await this.prisma.$queryRaw<any[]>`
@@ -229,6 +246,7 @@ export class FullTextSearchStrategy {
         ${minPriceCondition}
         ${maxPriceCondition}
         ${minRatingCondition}
+        ${excludeSellerCondition}
       ORDER BY relevance_score DESC, s."createdAt" DESC
       LIMIT 100
     `;

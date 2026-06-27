@@ -1,79 +1,108 @@
-import { Resolver, Query, Args, Mutation } from "@nestjs/graphql";
-import { SearchService } from "./search.service";
+import { UnauthorizedException } from '@nestjs/common';
+import { Resolver, Query, Args, Mutation, Int, Context } from '@nestjs/graphql';
+import { SearchService } from './search.service';
+import { CatalogIndexerService } from './indexer/catalog-indexer.service';
+import { Language } from '../graphql/enums';
 import {
   SearchInput,
   AutocompleteInput,
   RecommendationInput,
   TrackSearchClickInput,
   TrackItemViewInput,
-} from "./dto/search.input";
+} from './dto/search.input';
 import {
   SearchResponse,
   AutocompleteResponse,
   RecommendationResponse,
   TrendingResponse,
-} from "./entities/search-result.entity";
+} from './entities/search-result.entity';
 
 @Resolver()
 export class SearchResolver {
-  constructor(private readonly searchService: SearchService) {}
+  constructor(
+    private readonly searchService: SearchService,
+    private readonly indexer: CatalogIndexerService,
+  ) {}
 
   @Query(() => SearchResponse, {
-    name: "search",
-    description: "Search for products and services across the marketplace",
+    name: 'search',
+    description: 'Search for products and services across the marketplace',
   })
   async search(
-    @Args("input") input: SearchInput,
-    @Args("userId", { nullable: true }) userId?: string,
-    @Args("sessionId", { nullable: true }) sessionId?: string
+    @Args('input') input: SearchInput,
+    @Args('language', { type: () => Language, defaultValue: Language.ES })
+    language: Language,
+    @Context() ctx: { sellerId?: string },
+    @Args('userId', { nullable: true }) userId?: string,
+    @Args('sessionId', { nullable: true }) sessionId?: string,
   ): Promise<SearchResponse> {
-    return this.searchService.search(input, userId, sessionId);
+    return this.searchService.search({
+      input,
+      language,
+      userId,
+      sessionId,
+      excludeSellerId: ctx.sellerId,
+    });
+  }
+
+  @Mutation(() => Int, {
+    name: 'reindexCatalog',
+    description:
+      'Admin-only: rebuild the Typesense catalog index from the database. ' +
+      'Returns the number of documents indexed.',
+  })
+  async reindexCatalog(@Context() ctx: { adminId?: string }): Promise<number> {
+    if (!ctx.adminId) {
+      throw new UnauthorizedException('Admin authentication required');
+    }
+    const { indexed } = await this.indexer.reindexAll();
+    return indexed;
   }
 
   @Query(() => AutocompleteResponse, {
-    name: "autocomplete",
-    description: "Get autocomplete suggestions for search input",
+    name: 'autocomplete',
+    description: 'Get autocomplete suggestions for search input',
   })
   async autocomplete(
-    @Args("input") input: AutocompleteInput
+    @Args('input') input: AutocompleteInput,
   ): Promise<AutocompleteResponse> {
     return this.searchService.autocomplete(input);
   }
 
   @Query(() => RecommendationResponse, {
-    name: "recommendations",
-    description: "Get personalized recommendations based on user activity",
+    name: 'recommendations',
+    description: 'Get personalized recommendations based on user activity',
   })
   async recommendations(
-    @Args("input") input: RecommendationInput
+    @Args('input') input: RecommendationInput,
   ): Promise<RecommendationResponse> {
     return this.searchService.getRecommendations(input);
   }
 
   @Query(() => TrendingResponse, {
-    name: "trending",
-    description: "Get trending searches, products, and services",
+    name: 'trending',
+    description: 'Get trending searches, products, and services',
   })
   async trending(): Promise<TrendingResponse> {
     return this.searchService.getTrending();
   }
 
   @Mutation(() => Boolean, {
-    name: "trackSearchClick",
-    description: "Track when a user clicks on a search result",
+    name: 'trackSearchClick',
+    description: 'Track when a user clicks on a search result',
   })
   async trackSearchClick(
-    @Args("input") input: TrackSearchClickInput
+    @Args('input') input: TrackSearchClickInput,
   ): Promise<boolean> {
     return this.searchService.trackClick(input);
   }
 
   @Mutation(() => Boolean, {
-    name: "trackItemView",
-    description: "Track when a user views an item",
+    name: 'trackItemView',
+    description: 'Track when a user views an item',
   })
   async trackItemView(
-    @Args("input") input: TrackItemViewInput
+    @Args('input') input: TrackItemViewInput,
   ): Promise<boolean> {
     return this.searchService.trackView(input);
   }

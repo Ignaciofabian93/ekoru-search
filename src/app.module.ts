@@ -1,21 +1,21 @@
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { GraphQLModule } from "@nestjs/graphql";
-import { ScheduleModule } from "@nestjs/schedule";
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ScheduleModule } from '@nestjs/schedule';
 import {
   ApolloFederationDriver,
   ApolloFederationDriverConfig,
-} from "@nestjs/apollo";
-import { Request, Response } from "express";
-import { PrismaModule } from "./prisma/prisma.module";
-import { SearchModule } from "./search/search.module";
-import { DateTimeScalar, JSONScalar } from "./graphql/scalars";
-import configuration from "./config/configuration";
+} from '@nestjs/apollo';
+import { Request, Response } from 'express';
+import { PrismaModule } from './prisma/prisma.module';
+import { SearchModule } from './search/search.module';
+import { DateTimeScalar, JSONScalar } from './graphql/scalars';
+import configuration from './config/configuration';
 
 // Import to register enums
-import "./graphql/enums";
-import { HealthController } from "./health/health.controller";
-import { PrometheusModule } from "@willsoto/nestjs-prometheus";
+import './graphql/enums';
+import { HealthController } from './health/health.controller';
+import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 
 @Module({
   imports: [
@@ -41,15 +41,16 @@ import { PrometheusModule } from "@willsoto/nestjs-prometheus";
         federation: 2,
       },
       sortSchema: true,
-      playground: process.env.NODE_ENV !== "production",
+      playground: process.env.NODE_ENV !== 'production',
       context: ({ req, res }: { req: Request; res: Response }) => ({
         req,
         res,
-        sellerId: req.headers["x-seller-id"] as string,
-        token: req.headers.authorization?.replace("Bearer ", "") as string,
+        sellerId: req.headers['x-seller-id'] as string,
+        adminId: req.headers['x-admin-id'] as string,
+        token: req.headers.authorization?.replace('Bearer ', '') as string,
       }),
       formatError: (error) => {
-        if (process.env.NODE_ENV === "production") {
+        if (process.env.NODE_ENV === 'production') {
           delete error.extensions?.exception;
         }
         return error;

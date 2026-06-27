@@ -1,6 +1,8 @@
-import { Injectable } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
+import { Inject, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { Language } from '../graphql/enums';
 import {
   SearchInput,
   SearchType,
@@ -9,7 +11,7 @@ import {
   RecommendationInput,
   TrackSearchClickInput,
   TrackItemViewInput,
-} from "./dto/search.input";
+} from './dto/search.input';
 import {
   SearchResponse,
   SearchResultItem,
@@ -21,21 +23,105 @@ import {
   RecommendationItem,
   TrendingResponse,
   TrendingSearch,
-} from "./entities/search-result.entity";
-import { FullTextSearchStrategy } from "./strategies/fulltext-search.strategy";
+} from './entities/search-result.entity';
+import { FullTextSearchStrategy } from './strategies/fulltext-search.strategy';
+import {
+  SEARCH_ENGINE,
+  type SearchEngine,
+} from './engine/search-engine.interface';
+import { localeFromLanguage } from './indexer/locale.config';
 
 @Injectable()
 export class SearchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fullTextSearch: FullTextSearchStrategy,
+    private readonly config: ConfigService,
+    @Inject(SEARCH_ENGINE) private readonly engine: SearchEngine,
   ) {}
 
-  async search(
-    input: SearchInput,
-    userId?: string,
-    sessionId?: string,
-  ): Promise<SearchResponse> {
+  /**
+   * Run a catalog search. Routes to the configured engine: Typesense (default,
+   * typo-tolerant, locale-routed) or the legacy Postgres full-text strategy
+   * (`SEARCH_ENGINE=postgres`, kept for rollback).
+   */
+  async search(args: {
+    input: SearchInput;
+    userId?: string;
+    sessionId?: string;
+    excludeSellerId?: string;
+    language?: Language;
+  }): Promise<SearchResponse> {
+    if (this.config.get<string>('searchEngine') === 'postgres') {
+      return this.searchViaPostgres(args);
+    }
+    return this.searchViaEngine(args);
+  }
+
+  /** Typesense-backed search: route to the locale collection, map results. */
+  private async searchViaEngine({
+    input,
+    userId,
+    sessionId,
+    excludeSellerId,
+    language,
+  }: {
+    input: SearchInput;
+    userId?: string;
+    sessionId?: string;
+    excludeSellerId?: string;
+    language?: Language;
+  }): Promise<SearchResponse> {
+    const startTime = Date.now();
+    const page = input.page ?? 1;
+    const pageSize = input.pageSize ?? 20;
+    const locale = localeFromLanguage(language);
+
+    const { items, found, facets } = await this.engine.search({
+      locale,
+      input,
+      excludeSellerId,
+    });
+
+    const totalPages = Math.ceil(found / pageSize);
+    const searchId = await this.logSearch(
+      input.query,
+      found,
+      userId,
+      sessionId,
+    );
+
+    return {
+      searchId: searchId ?? undefined,
+      items,
+      pageInfo: {
+        currentPage: page,
+        pageSize,
+        totalItems: found,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+      facets,
+      query: input.query,
+      processingTimeMs: Date.now() - startTime,
+      suggestions: [],
+      correctedQuery: undefined,
+    };
+  }
+
+  /** Legacy PostgreSQL full-text search path (rollback via SEARCH_ENGINE=postgres). */
+  private async searchViaPostgres({
+    input,
+    userId,
+    sessionId,
+    excludeSellerId,
+  }: {
+    input: SearchInput;
+    userId?: string;
+    sessionId?: string;
+    excludeSellerId?: string;
+  }): Promise<SearchResponse> {
     const startTime = Date.now();
     const {
       query,
@@ -56,7 +142,8 @@ export class SearchService {
     const searchTerms = this.tokenize(normalizedQuery);
     const correctedQuery = await this.spellCheck(normalizedQuery);
 
-    // Search products and services based on type using full-text search
+    // Search products and services based on type using full-text search.
+    // `excludeSellerId` hides the current user's own listings from their results.
     const filters = {
       minPrice,
       maxPrice,
@@ -64,6 +151,7 @@ export class SearchService {
       tags,
       hasOffer,
       minRating,
+      excludeSellerId,
     };
 
     const [productResults, storeProductResults, serviceResults] =
@@ -109,9 +197,8 @@ export class SearchService {
     // Generate facets
     const facets = this.generateFacets(allResults);
 
-    // Generate suggestions if few results
-    const suggestions =
-      totalItems < 5 ? await this.generateSuggestions(normalizedQuery) : [];
+    // Suggestions/autocomplete are out of scope; always empty.
+    const suggestions: string[] = [];
 
     // Log search for analytics and get searchId
     const searchId = await this.logSearch(query, totalItems, userId, sessionId);
@@ -319,7 +406,7 @@ export class SearchService {
           price: p.price,
           images: p.images || [],
           rating: undefined,
-          reason: "Based on your browsing history",
+          reason: 'Based on your browsing history',
           score: 0.8,
         });
       });
@@ -385,7 +472,7 @@ export class SearchService {
           description: s.description || undefined,
           price: s.basePrice || undefined,
           images: s.images || [],
-          reason: "Similar to services you viewed",
+          reason: 'Similar to services you viewed',
           score: 0.75,
         });
       });
@@ -399,16 +486,16 @@ export class SearchService {
     return {
       items: uniqueRecommendations.slice(0, limit),
       basedOn:
-        query || (viewedProductIds?.length ? "browsing history" : undefined),
+        query || (viewedProductIds?.length ? 'browsing history' : undefined),
     };
   }
 
   async getTrending(): Promise<TrendingResponse> {
     // Get trending searches from logs
     const trendingSearches = await this.prisma.searchLog.groupBy({
-      by: ["query"],
+      by: ['query'],
       _count: { query: true },
-      orderBy: { _count: { query: "desc" } },
+      orderBy: { _count: { query: 'desc' } },
       take: 10,
       where: {
         createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }, // Last 7 days
@@ -446,7 +533,7 @@ export class SearchService {
       price: p.price,
       images: p.images || [],
       rating: undefined,
-      reason: "Trending now",
+      reason: 'Trending now',
       score: 1,
     }));
 
@@ -474,7 +561,7 @@ export class SearchService {
       description: s.description || undefined,
       price: s.basePrice || undefined,
       images: s.images || [],
-      reason: "Popular service",
+      reason: 'Popular service',
       score: 1,
     }));
 
@@ -487,46 +574,46 @@ export class SearchService {
     return query
       .toLowerCase()
       .trim()
-      .replace(/[^\w\sáéíóúñü]/g, " ")
-      .replace(/\s+/g, " ");
+      .replace(/[^\w\sáéíóúñü]/g, ' ')
+      .replace(/\s+/g, ' ');
   }
 
   private tokenize(query: string): string[] {
     const stopWords = new Set([
-      "el",
-      "la",
-      "los",
-      "las",
-      "un",
-      "una",
-      "unos",
-      "unas",
-      "de",
-      "del",
-      "al",
-      "a",
-      "en",
-      "con",
-      "por",
-      "para",
-      "y",
-      "o",
-      "que",
-      "es",
-      "son",
-      "the",
-      "a",
-      "an",
-      "and",
-      "or",
-      "of",
-      "to",
-      "in",
-      "for",
+      'el',
+      'la',
+      'los',
+      'las',
+      'un',
+      'una',
+      'unos',
+      'unas',
+      'de',
+      'del',
+      'al',
+      'a',
+      'en',
+      'con',
+      'por',
+      'para',
+      'y',
+      'o',
+      'que',
+      'es',
+      'son',
+      'the',
+      'a',
+      'an',
+      'and',
+      'or',
+      'of',
+      'to',
+      'in',
+      'for',
     ]);
 
     return query
-      .split(" ")
+      .split(' ')
       .filter((word) => word.length > 1 && !stopWords.has(word));
   }
 
@@ -563,7 +650,7 @@ export class SearchService {
   ): number {
     let score = 0;
     const nameNormalized = item.name.toLowerCase();
-    const descNormalized = (item.description || "").toLowerCase();
+    const descNormalized = (item.description || '').toLowerCase();
 
     for (const term of searchTerms) {
       // Exact match in name (highest weight)
@@ -621,14 +708,14 @@ export class SearchService {
     searchTerms: string[],
   ): SearchResultItem {
     let highlightedName = item.name;
-    let highlightedDescription = item.description || "";
+    let highlightedDescription = item.description || '';
 
     for (const term of searchTerms) {
-      const regex = new RegExp(`(${term})`, "gi");
-      highlightedName = highlightedName.replace(regex, "<mark>$1</mark>");
+      const regex = new RegExp(`(${term})`, 'gi');
+      highlightedName = highlightedName.replace(regex, '<mark>$1</mark>');
       highlightedDescription = highlightedDescription.replace(
         regex,
-        "<mark>$1</mark>",
+        '<mark>$1</mark>',
       );
     }
 
@@ -683,10 +770,10 @@ export class SearchService {
     results: SearchResultItem[],
   ): { name: string; count: number }[] {
     const ranges = [
-      { name: "$0 - $10,000", min: 0, max: 10000 },
-      { name: "$10,000 - $50,000", min: 10000, max: 50000 },
-      { name: "$50,000 - $100,000", min: 50000, max: 100000 },
-      { name: "$100,000+", min: 100000, max: Infinity },
+      { name: '$0 - $10,000', min: 0, max: 10000 },
+      { name: '$10,000 - $50,000', min: 10000, max: 50000 },
+      { name: '$50,000 - $100,000', min: 50000, max: 100000 },
+      { name: '$100,000+', min: 100000, max: Infinity },
     ];
 
     return ranges.map((range) => ({
@@ -698,66 +785,10 @@ export class SearchService {
     }));
   }
 
-  private async spellCheck(query: string): Promise<string> {
+  private spellCheck(query: string): Promise<string> {
     // Simple spell check - could be enhanced with a proper library
     // For now, return the original query
-    return query;
-  }
-
-  private async generateSuggestions(query: string): Promise<string[]> {
-    // Get similar product/service names
-    const products = await this.prisma.$queryRaw<{ name: string }[]>`
-      SELECT name FROM "Product" WHERE "isActive" = true AND "deletedAt" IS NULL LIMIT 100
-    `;
-
-    const services = await this.prisma.$queryRaw<{ name: string }[]>`
-      SELECT name FROM "Service" WHERE "isActive" = true LIMIT 100
-    `;
-
-    const allNames = [
-      ...products.map((p) => p.name),
-      ...services.map((s) => s.name),
-    ];
-
-    // Find similar names using basic similarity
-    const suggestions = allNames
-      .map((name) => ({
-        name,
-        similarity: this.calculateSimilarity(query, name.toLowerCase()),
-      }))
-      .filter((s) => s.similarity > 0.3)
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, 5)
-      .map((s) => s.name);
-
-    return suggestions;
-  }
-
-  private calculateSimilarity(str1: string, str2: string): number {
-    const longer = str1.length > str2.length ? str1 : str2;
-    const shorter = str1.length > str2.length ? str2 : str1;
-
-    if (longer.length === 0) return 1.0;
-
-    const costs: number[] = [];
-    for (let i = 0; i <= shorter.length; i++) {
-      let lastValue = i;
-      for (let j = 0; j <= longer.length; j++) {
-        if (i === 0) {
-          costs[j] = j;
-        } else if (j > 0) {
-          let newValue = costs[j - 1];
-          if (shorter.charAt(i - 1) !== longer.charAt(j - 1)) {
-            newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
-          }
-          costs[j - 1] = lastValue;
-          lastValue = newValue;
-        }
-      }
-      if (i > 0) costs[longer.length] = lastValue;
-    }
-
-    return (longer.length - costs[longer.length]) / longer.length;
+    return Promise.resolve(query);
   }
 
   private calculateAutocompleteScore(text: string, query: string): number {
@@ -771,9 +802,9 @@ export class SearchService {
   private async getPopularSearches(limit: number): Promise<string[]> {
     try {
       const popular = await this.prisma.searchLog.groupBy({
-        by: ["query"],
+        by: ['query'],
         _count: { query: true },
-        orderBy: { _count: { query: "desc" } },
+        orderBy: { _count: { query: 'desc' } },
         take: limit,
         where: {
           createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
@@ -803,8 +834,8 @@ export class SearchService {
       });
 
       // Update user search history (if table exists)
-      if (userId && this.prisma["userSearchHistory"]) {
-        await this.prisma["userSearchHistory"].create({
+      if (userId && this.prisma['userSearchHistory']) {
+        await this.prisma['userSearchHistory'].create({
           data: {
             userId,
             query: query.toLowerCase().trim(),
@@ -815,8 +846,8 @@ export class SearchService {
       }
 
       // Update popular searches (if table exists)
-      if (this.prisma["popularSearch"]) {
-        await this.prisma["popularSearch"].upsert({
+      if (this.prisma['popularSearch']) {
+        await this.prisma['popularSearch'].upsert({
           where: { query: query.toLowerCase().trim() },
           update: {
             searchCount: { increment: 1 },
@@ -879,15 +910,15 @@ export class SearchService {
   async trackView(input: TrackItemViewInput): Promise<boolean> {
     try {
       // Update view count based on item type using raw SQL (cross-schema query)
-      if (input.itemType === "PRODUCT") {
+      if (input.itemType === 'PRODUCT') {
         await this.prisma.$executeRaw`
           UPDATE "Product" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
         `;
-      } else if (input.itemType === "STORE_PRODUCT") {
+      } else if (input.itemType === 'STORE_PRODUCT') {
         await this.prisma.$executeRaw`
           UPDATE "StoreProduct" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
         `;
-      } else if (input.itemType === "SERVICE") {
+      } else if (input.itemType === 'SERVICE') {
         await this.prisma.$executeRaw`
           UPDATE "Service" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
         `;

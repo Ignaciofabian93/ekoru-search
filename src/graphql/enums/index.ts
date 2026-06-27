@@ -1,5 +1,18 @@
 import { registerEnumType } from '@nestjs/graphql';
 
+/**
+ * Platform languages (mirrors the root Prisma `Language` enum, which this
+ * subgraph's generated client does not expose). Used as the `language` arg on
+ * `search` to route to the matching per-locale Typesense collection.
+ */
+export enum Language {
+  ES = 'ES',
+  EN = 'EN',
+  FR = 'FR',
+  PT = 'PT',
+  DE = 'DE',
+}
+
 export enum ServicePricing {
   FIXED = 'FIXED',
   QUOTATION = 'QUOTATION',
@@ -28,6 +41,11 @@ export enum ServiceSortField {
 }
 
 // Register enums with GraphQL
+registerEnumType(Language, {
+  name: 'Language',
+  description: 'Supported platform languages',
+});
+
 registerEnumType(ServicePricing, {
   name: 'ServicePricing',
   description: 'Service pricing types',
