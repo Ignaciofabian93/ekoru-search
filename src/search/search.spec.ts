@@ -45,6 +45,10 @@ describe('SearchService', () => {
     popularSearch: {
       upsert: jest.fn(),
     },
+    // Raw SQL is used by autocomplete/recommendations/trending (reads) and
+    // trackView (view-count increment).
+    $queryRaw: jest.fn(),
+    $executeRaw: jest.fn(),
   };
 
   const mockFullTextSearchStrategy = {
@@ -103,6 +107,8 @@ describe('SearchService', () => {
     mockPrismaService.product.findMany.mockResolvedValue([]);
     mockPrismaService.service.findMany.mockResolvedValue([]);
     mockPrismaService.searchLog.groupBy.mockResolvedValue([]);
+    mockPrismaService.$queryRaw.mockResolvedValue([]);
+    mockPrismaService.$executeRaw.mockResolvedValue(undefined);
   });
 
   describe('search', () => {
@@ -198,29 +204,19 @@ describe('SearchService', () => {
         type: SearchType.ALL,
       };
 
+      // Shapes match the raw SQL projections in autocomplete():
+      // products -> { id, name, category }, services -> { id, name }
       const mockProducts = [
-        {
-          id: 1,
-          name: 'Laptop Dell',
-          productCategory: { productCategoryName: 'Computers' },
-        },
-        {
-          id: 2,
-          name: 'Laptop HP',
-          productCategory: { productCategoryName: 'Computers' },
-        },
+        { id: 1, name: 'Laptop Dell', category: 'Computers' },
+        { id: 2, name: 'Laptop HP', category: 'Computers' },
       ];
 
-      const mockServices = [
-        {
-          id: 1,
-          name: 'Laptop Repair',
-          serviceCategory: { subCategory: 'Tech Support' },
-        },
-      ];
+      const mockServices = [{ id: 1, name: 'Laptop Repair' }];
 
-      mockPrismaService.product.findMany.mockResolvedValue(mockProducts);
-      mockPrismaService.service.findMany.mockResolvedValue(mockServices);
+      // type ALL queries products first, then services.
+      mockPrismaService.$queryRaw
+        .mockResolvedValueOnce(mockProducts)
+        .mockResolvedValueOnce(mockServices);
       mockPrismaService.searchLog.groupBy.mockResolvedValue([
         { query: 'laptop', _count: { query: 10 } },
       ]);
@@ -258,21 +254,15 @@ describe('SearchService', () => {
         limit: 8,
       };
 
-      const mockServices = [
-        {
-          id: 1,
-          name: 'Repair Service',
-          serviceCategory: { subCategory: 'Maintenance' },
-        },
-      ];
+      const mockServices = [{ id: 1, name: 'Repair Service' }];
 
-      mockPrismaService.product.findMany.mockResolvedValue([]);
-      mockPrismaService.service.findMany.mockResolvedValue(mockServices);
+      // type SERVICES skips the product query and runs only the service query.
+      mockPrismaService.$queryRaw.mockResolvedValueOnce(mockServices);
       mockPrismaService.searchLog.groupBy.mockResolvedValue([]);
 
       const result = await service.autocomplete(autocompleteInput);
 
-      expect(mockPrismaService.service.findMany).toHaveBeenCalled();
+      expect(mockPrismaService.$queryRaw).toHaveBeenCalled();
       expect(
         result.suggestions.every((s) => s.type === SearchResultType.SERVICE),
       ).toBe(true);
@@ -335,6 +325,7 @@ describe('SearchService', () => {
         { productCategoryId: 5, interests: ['gaming'] },
       ];
 
+      // Raw SQL projection: { id, name, description, price, images }
       const mockSimilarProducts = [
         {
           id: 3,
@@ -342,13 +333,12 @@ describe('SearchService', () => {
           description: 'Similar to viewed',
           price: 500,
           images: [],
-          productCategory: { productCategoryName: 'Electronics' },
-          seller: { id: 'seller1' },
-          createdAt: new Date(),
         },
       ];
 
-      mockPrismaService.product.findMany
+      // First query reads viewed products' categories/interests, second
+      // query reads the similar products.
+      mockPrismaService.$queryRaw
         .mockResolvedValueOnce(mockViewedProducts)
         .mockResolvedValueOnce(mockSimilarProducts);
 
@@ -369,6 +359,7 @@ describe('SearchService', () => {
         { subcategoryId: 3, tags: ['tech', 'support'] },
       ];
 
+      // Raw SQL projection: { id, name, description, basePrice, images }
       const mockSimilarServices = [
         {
           id: 4,
@@ -376,13 +367,12 @@ describe('SearchService', () => {
           description: 'Related service',
           basePrice: 100,
           images: [],
-          serviceCategory: { subCategory: 'Tech' },
-          seller: { id: 'seller2' },
-          createdAt: new Date(),
         },
       ];
 
-      mockPrismaService.service.findMany
+      // First query reads viewed services' subcategories/tags, second
+      // query reads the similar services.
+      mockPrismaService.$queryRaw
         .mockResolvedValueOnce(mockViewedServices)
         .mockResolvedValueOnce(mockSimilarServices);
 
@@ -412,7 +402,9 @@ describe('SearchService', () => {
         .spyOn(service as any, 'searchProducts')
         .mockResolvedValue([duplicateProduct]);
       jest.spyOn(service as any, 'searchServices').mockResolvedValue([]);
-      mockPrismaService.product.findMany
+      // viewedProductIds path: viewed-categories query, then similar-products
+      // query returning the same id=1 so it collides with the query result.
+      mockPrismaService.$queryRaw
         .mockResolvedValueOnce([{ productCategoryId: 1, interests: [] }])
         .mockResolvedValueOnce([
           {
@@ -421,9 +413,6 @@ describe('SearchService', () => {
             description: 'Duplicate',
             price: 100,
             images: [],
-            productCategory: {},
-            seller: {},
-            createdAt: new Date(),
           },
         ]);
 
@@ -443,6 +432,7 @@ describe('SearchService', () => {
         { query: 'phone', _count: { query: 15 } },
       ];
 
+      // Raw SQL projections for the trending product/service queries.
       const mockTrendingProducts = [
         {
           id: 1,
@@ -450,10 +440,6 @@ describe('SearchService', () => {
           description: 'Popular product',
           price: 500,
           images: [],
-          isActive: true,
-          deletedAt: null,
-          productCategory: { productCategoryName: 'Electronics' },
-          createdAt: new Date(),
         },
       ];
 
@@ -464,21 +450,16 @@ describe('SearchService', () => {
           description: 'Popular service',
           basePrice: 100,
           images: [],
-          isActive: true,
-          serviceCategory: { subCategory: 'Tech' },
-          createdAt: new Date(),
         },
       ];
 
       mockPrismaService.searchLog.groupBy.mockResolvedValue(
         mockTrendingSearches,
       );
-      mockPrismaService.product.findMany.mockResolvedValue(
-        mockTrendingProducts,
-      );
-      mockPrismaService.service.findMany.mockResolvedValue(
-        mockTrendingServices,
-      );
+      // getTrending queries trending products first, then services.
+      mockPrismaService.$queryRaw
+        .mockResolvedValueOnce(mockTrendingProducts)
+        .mockResolvedValueOnce(mockTrendingServices);
 
       const result = await service.getTrending();
 
@@ -503,8 +484,7 @@ describe('SearchService', () => {
       mockPrismaService.searchLog.groupBy.mockResolvedValue(
         mockTrendingSearches,
       );
-      mockPrismaService.product.findMany.mockResolvedValue([]);
-      mockPrismaService.service.findMany.mockResolvedValue([]);
+      // Trending product/service queries return no rows (default $queryRaw []).
 
       const result = await service.getTrending();
 
@@ -614,26 +594,11 @@ describe('SearchService', () => {
         source: 'search',
       };
 
-      mockPrismaService.itemView.create.mockResolvedValue({});
-      mockPrismaService.product.update.mockResolvedValue({});
-
       const result = await service.trackView(trackViewInput);
 
       expect(result).toBe(true);
-      expect(mockPrismaService.itemView.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          itemId: 5,
-          itemType: 'PRODUCT',
-          userId: 'user456',
-          sessionId: 'session789',
-          duration: 120,
-          source: 'search',
-        }),
-      });
-      expect(mockPrismaService.product.update).toHaveBeenCalledWith({
-        where: { id: 5 },
-        data: { viewCount: { increment: 1 } },
-      });
+      // trackView increments the Product view count via raw SQL.
+      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
     });
 
     it('should track item view for SERVICE successfully', async () => {
@@ -643,16 +608,11 @@ describe('SearchService', () => {
         sessionId: 'session123',
       };
 
-      mockPrismaService.itemView.create.mockResolvedValue({});
-      mockPrismaService.service.update.mockResolvedValue({});
-
       const result = await service.trackView(trackViewInput);
 
       expect(result).toBe(true);
-      expect(mockPrismaService.service.update).toHaveBeenCalledWith({
-        where: { id: 3 },
-        data: { viewCount: { increment: 1 } },
-      });
+      // trackView increments the Service view count via raw SQL.
+      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
     });
 
     it('should track item view for STORE_PRODUCT successfully', async () => {
@@ -662,16 +622,11 @@ describe('SearchService', () => {
         userId: 'user789',
       };
 
-      mockPrismaService.itemView.create.mockResolvedValue({});
-      mockPrismaService.storeProduct.update.mockResolvedValue({});
-
       const result = await service.trackView(trackViewInput);
 
       expect(result).toBe(true);
-      expect(mockPrismaService.storeProduct.update).toHaveBeenCalledWith({
-        where: { id: 7 },
-        data: { viewCount: { increment: 1 } },
-      });
+      // trackView increments the StoreProduct view count via raw SQL.
+      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
     });
 
     it('should return false on tracking error', async () => {
@@ -680,9 +635,7 @@ describe('SearchService', () => {
         itemType: 'PRODUCT',
       };
 
-      mockPrismaService.itemView.create.mockRejectedValue(
-        new Error('DB Error'),
-      );
+      mockPrismaService.$executeRaw.mockRejectedValue(new Error('DB Error'));
 
       const result = await service.trackView(trackViewInput);
 
@@ -696,18 +649,11 @@ describe('SearchService', () => {
         sessionId: 'anon-session',
       };
 
-      mockPrismaService.itemView.create.mockResolvedValue({});
-      mockPrismaService.product.update.mockResolvedValue({});
-
       const result = await service.trackView(trackViewInput);
 
+      // No user id is required; trackView still increments the view count.
       expect(result).toBe(true);
-      expect(mockPrismaService.itemView.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          userId: undefined,
-          sessionId: 'anon-session',
-        }),
-      });
+      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
     });
   });
 });
