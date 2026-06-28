@@ -1,47 +1,43 @@
 import {
-  localeFromLanguage,
-  localeFromSeller,
-  collectionFor,
-  DEFAULT_LOCALE,
+  languageFilter,
+  languageFromSeller,
+  CATALOG_COLLECTION,
+  DEFAULT_LANGUAGE,
 } from './locale.config';
 import { Language } from '../../graphql/enums';
 
 describe('locale.config', () => {
-  describe('localeFromLanguage', () => {
-    it('maps supported languages to their locale', () => {
-      expect(localeFromLanguage(Language.ES)).toBe('es');
-      expect(localeFromLanguage(Language.EN)).toBe('en');
-      expect(localeFromLanguage(Language.FR)).toBe('fr');
+  describe('languageFilter', () => {
+    it('maps the GraphQL language arg to a lowercase filter value', () => {
+      expect(languageFilter(Language.ES)).toBe('es');
+      expect(languageFilter(Language.EN)).toBe('en');
+      expect(languageFilter(Language.FR)).toBe('fr');
     });
 
-    it('falls back to the default locale for languages without a collection', () => {
-      expect(localeFromLanguage(Language.PT)).toBe(DEFAULT_LOCALE);
-      expect(localeFromLanguage(undefined)).toBe(DEFAULT_LOCALE);
+    it('defaults to ES when no language is provided', () => {
+      expect(languageFilter(undefined)).toBe(DEFAULT_LANGUAGE);
     });
   });
 
-  describe('localeFromSeller', () => {
-    it('routes Québec sellers to French', () => {
-      expect(localeFromSeller({ countryId: 1, regionName: 'Québec' })).toBe(
+  describe('languageFromSeller', () => {
+    it('routes Québec sellers to French regardless of country', () => {
+      expect(languageFromSeller({ countryId: 2, regionName: 'Québec' })).toBe(
         'fr',
       );
       expect(
-        localeFromSeller({ countryId: 1, regionName: 'Quebec City' }),
+        languageFromSeller({ countryId: 2, regionName: 'Quebec City' }),
       ).toBe('fr');
     });
 
-    it('defaults when no country/region match is configured', () => {
-      expect(localeFromSeller({ countryId: 999, regionName: 'Santiago' })).toBe(
-        DEFAULT_LOCALE,
-      );
-      expect(localeFromSeller({})).toBe(DEFAULT_LOCALE);
+    it('defaults to ES when no country/region mapping matches', () => {
+      expect(
+        languageFromSeller({ countryId: 999, regionName: 'Santiago' }),
+      ).toBe(DEFAULT_LANGUAGE);
+      expect(languageFromSeller({})).toBe(DEFAULT_LANGUAGE);
     });
   });
 
-  describe('collectionFor', () => {
-    it('builds the per-locale collection name', () => {
-      expect(collectionFor('es')).toBe('catalog_es');
-      expect(collectionFor('fr')).toBe('catalog_fr');
-    });
+  it('uses a single catalog collection', () => {
+    expect(CATALOG_COLLECTION).toBe('catalog');
   });
 });

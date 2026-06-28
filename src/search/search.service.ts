@@ -29,7 +29,7 @@ import {
   SEARCH_ENGINE,
   type SearchEngine,
 } from './engine/search-engine.interface';
-import { localeFromLanguage } from './indexer/locale.config';
+import { languageFilter } from './indexer/locale.config';
 
 @Injectable()
 export class SearchService {
@@ -51,6 +51,8 @@ export class SearchService {
     sessionId?: string;
     excludeSellerId?: string;
     language?: Language;
+    /** Guest country selection (ISO code); used only when not authenticated. */
+    guestCountryCode?: string;
   }): Promise<SearchResponse> {
     if (this.config.get<string>('searchEngine') === 'postgres') {
       return this.searchViaPostgres(args);
@@ -58,28 +60,43 @@ export class SearchService {
     return this.searchViaEngine(args);
   }
 
-  /** Typesense-backed search: route to the locale collection, map results. */
+  /**
+   * Typesense-backed search. Scopes results to the selected `language` and, for
+   * an authenticated user, to their own account country (all transactions are
+   * country-local). Guests (no seller id) have no country → language-only.
+   */
   private async searchViaEngine({
     input,
     userId,
     sessionId,
     excludeSellerId,
     language,
+    guestCountryCode,
   }: {
     input: SearchInput;
     userId?: string;
     sessionId?: string;
     excludeSellerId?: string;
     language?: Language;
+    guestCountryCode?: string;
   }): Promise<SearchResponse> {
     const startTime = Date.now();
     const page = input.page ?? 1;
     const pageSize = input.pageSize ?? 20;
-    const locale = localeFromLanguage(language);
+
+    // Authenticated users are scoped to their account country (never a client
+    // arg). Guests are scoped to their selected country (ISO code → id), or
+    // unscoped (language-only) when none was chosen.
+    const country = excludeSellerId
+      ? await this.resolveSellerCountry(excludeSellerId)
+      : guestCountryCode
+        ? await this.resolveCountryIdFromCode(guestCountryCode)
+        : undefined;
 
     const { items, found, facets } = await this.engine.search({
-      locale,
       input,
+      language: languageFilter(language),
+      country,
       excludeSellerId,
     });
 
@@ -108,6 +125,40 @@ export class SearchService {
       suggestions: [],
       correctedQuery: undefined,
     };
+  }
+
+  /**
+   * Look up a seller's country id from the shared DB. Used to scope search
+   * results to the authenticated user's market. Returns undefined if unknown.
+   */
+  private async resolveSellerCountry(
+    sellerId: string,
+  ): Promise<number | undefined> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ countryId: number | null }[]>`
+        SELECT "countryId" FROM "Seller" WHERE id = ${sellerId} LIMIT 1
+      `;
+      return rows[0]?.countryId ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Map an ISO country code (e.g. "CL") to its Country id, for scoping a guest's
+   * search to their selected country. Returns undefined if unknown.
+   */
+  private async resolveCountryIdFromCode(
+    code: string,
+  ): Promise<number | undefined> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Country" WHERE code = ${code} LIMIT 1
+      `;
+      return rows[0]?.id ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Legacy PostgreSQL full-text search path (rollback via SEARCH_ENGINE=postgres). */

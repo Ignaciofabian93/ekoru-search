@@ -139,7 +139,7 @@ describe('SearchService', () => {
       const result = await service.search({ input: baseInput });
 
       expect(mockSearchEngine.search).toHaveBeenCalledWith(
-        expect.objectContaining({ locale: 'es', input: baseInput }),
+        expect.objectContaining({ input: baseInput, language: 'es' }),
       );
       expect(result.items).toHaveLength(1);
       expect(result.pageInfo.totalItems).toBe(1);
@@ -147,25 +147,51 @@ describe('SearchService', () => {
       expect(result.suggestions).toEqual([]);
     });
 
-    it('routes the language arg to the matching locale collection', async () => {
+    it('passes the selected language to the engine', async () => {
       mockSearchEngine.search.mockResolvedValue({ items: [], found: 0 });
       mockPrismaService.searchLog.create.mockResolvedValue({ id: 2 });
 
       await service.search({ input: baseInput, language: Language.EN });
 
       expect(mockSearchEngine.search).toHaveBeenCalledWith(
-        expect.objectContaining({ locale: 'en' }),
+        expect.objectContaining({ language: 'en' }),
       );
     });
 
-    it("excludes the current user's own listings", async () => {
+    it("excludes own listings and scopes to the seller's account country", async () => {
       mockSearchEngine.search.mockResolvedValue({ items: [], found: 0 });
       mockPrismaService.searchLog.create.mockResolvedValue({ id: 3 });
+      // resolveSellerCountry → seller-123 is in country 2
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([{ countryId: 2 }]);
 
       await service.search({ input: baseInput, excludeSellerId: 'seller-123' });
 
       expect(mockSearchEngine.search).toHaveBeenCalledWith(
-        expect.objectContaining({ excludeSellerId: 'seller-123' }),
+        expect.objectContaining({ excludeSellerId: 'seller-123', country: 2 }),
+      );
+    });
+
+    it('scopes a guest to their selected country (ISO code → id)', async () => {
+      mockSearchEngine.search.mockResolvedValue({ items: [], found: 0 });
+      mockPrismaService.searchLog.create.mockResolvedValue({ id: 7 });
+      // resolveCountryIdFromCode → "CL" is country id 1
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([{ id: 1 }]);
+
+      await service.search({ input: baseInput, guestCountryCode: 'CL' });
+
+      expect(mockSearchEngine.search).toHaveBeenCalledWith(
+        expect.objectContaining({ country: 1, excludeSellerId: undefined }),
+      );
+    });
+
+    it('leaves a guest without a country unscoped (language-only)', async () => {
+      mockSearchEngine.search.mockResolvedValue({ items: [], found: 0 });
+      mockPrismaService.searchLog.create.mockResolvedValue({ id: 8 });
+
+      await service.search({ input: baseInput });
+
+      expect(mockSearchEngine.search).toHaveBeenCalledWith(
+        expect.objectContaining({ country: undefined }),
       );
     });
 

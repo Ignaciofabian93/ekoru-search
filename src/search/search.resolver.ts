@@ -33,6 +33,7 @@ export class SearchResolver {
     @Args('language', { type: () => Language, defaultValue: Language.ES })
     language: Language,
     @Context() ctx: { sellerId?: string },
+    @Args('country', { type: () => String, nullable: true }) country?: string,
     @Args('userId', { nullable: true }) userId?: string,
     @Args('sessionId', { nullable: true }) sessionId?: string,
   ): Promise<SearchResponse> {
@@ -42,6 +43,9 @@ export class SearchResolver {
       userId,
       sessionId,
       excludeSellerId: ctx.sellerId,
+      // Guest country selection (ISO code), sent as an arg so web + mobile work
+      // the same way. Ignored for authenticated users (account country wins).
+      guestCountryCode: country,
     });
   }
 

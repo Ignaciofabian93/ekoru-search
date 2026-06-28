@@ -1,75 +1,64 @@
 import { Language } from '../../graphql/enums';
 
 /**
- * Locales that have their own Typesense collection (`catalog_<locale>`).
- * Content is single-language per item, so each item lives in exactly one of
- * these collections and the `language` arg routes a query to one of them.
+ * Single Typesense collection holding all catalog items across every market.
+ * Scoping is done with `country` + `language` filter fields, not separate
+ * collections — so a bilingual market (e.g. Canada: en + fr) lives in one place
+ * and a query just filters to the country + the language the user selected.
  */
-export const SUPPORTED_LOCALES = ['es', 'en', 'fr'] as const;
-export type Locale = (typeof SUPPORTED_LOCALES)[number];
+export const CATALOG_COLLECTION = 'catalog';
 
-export const DEFAULT_LOCALE: Locale = 'es';
+/** Content languages an item can be indexed under. */
+export const SUPPORTED_LANGUAGES = ['es', 'en', 'fr'] as const;
+export type ContentLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
-/** Typesense collection name for a locale, e.g. `catalog_es`. */
-export function collectionFor(locale: Locale): string {
-  return `catalog_${locale}`;
-}
+export const DEFAULT_LANGUAGE: ContentLanguage = 'es';
 
-const LANGUAGE_TO_LOCALE: Partial<Record<Language, Locale>> = {
-  [Language.ES]: 'es',
-  [Language.EN]: 'en',
-  [Language.FR]: 'fr',
-};
-
-/**
- * Which locale's collection to query for a given GraphQL `language` arg.
- * Languages without a dedicated collection (PT/DE) fall back to the default
- * market until those collections are introduced.
- */
-export function localeFromLanguage(language?: Language | null): Locale {
-  if (!language) return DEFAULT_LOCALE;
-  return LANGUAGE_TO_LOCALE[language] ?? DEFAULT_LOCALE;
-}
-
-function isLocale(value: string): value is Locale {
-  return (SUPPORTED_LOCALES as readonly string[]).includes(value);
+function isLanguage(value: string): value is ContentLanguage {
+  return (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
 }
 
 /**
- * country id -> locale overrides, parsed from env `LOCALE_COUNTRY_MAP`
- * (e.g. "1:es,2:en,3:fr"). Country ids are environment-specific, so this is
+ * The GraphQL `language` arg → the `language` filter value used at query time.
+ * The app always sends the user's selected language; defaults to ES.
+ */
+export function languageFilter(language?: Language | null): string {
+  return language ? language.toLowerCase() : DEFAULT_LANGUAGE;
+}
+
+/**
+ * country id → content language, parsed from env `COUNTRY_LANGUAGE_MAP`
+ * (e.g. "1:es,2:en,5:fr"). Country ids are environment-specific, so this is
  * configured per deployment rather than hardcoded.
  */
-function parseCountryMap(raw?: string): Record<number, Locale> {
-  const map: Record<number, Locale> = {};
+function parseCountryMap(raw?: string): Record<number, ContentLanguage> {
+  const map: Record<number, ContentLanguage> = {};
   if (!raw) return map;
   for (const pair of raw.split(',')) {
-    const [id, loc] = pair.split(':').map((s) => s.trim().toLowerCase());
+    const [id, lang] = pair.split(':').map((s) => s.trim().toLowerCase());
     const n = Number(id);
-    if (!Number.isNaN(n) && loc && isLocale(loc)) {
-      map[n] = loc;
-    }
+    if (!Number.isNaN(n) && lang && isLanguage(lang)) map[n] = lang;
   }
   return map;
 }
 
-const COUNTRY_ID_TO_LOCALE = parseCountryMap(process.env.LOCALE_COUNTRY_MAP);
+const COUNTRY_LANGUAGE = parseCountryMap(process.env.COUNTRY_LANGUAGE_MAP);
 
 /**
- * Derive an item's locale from its seller's country/region at index time.
- * This is the single onboarding point for new markets:
- *  - a region named like "Québec"/"Quebec" → `fr` (Canada French market);
- *  - otherwise the seller's country via `LOCALE_COUNTRY_MAP`;
- *  - otherwise `DEFAULT_LOCALE`.
+ * Derive an item's content language at index time from its seller's
+ * country/region. This is the single onboarding point for new markets:
+ *  - a region named like "Québec"/"Quebec" → `fr` (Canadian French market);
+ *  - else the seller's country via `COUNTRY_LANGUAGE_MAP`;
+ *  - else `DEFAULT_LANGUAGE`.
  */
-export function localeFromSeller(seller: {
+export function languageFromSeller(seller: {
   countryId?: number | null;
   regionName?: string | null;
-}): Locale {
+}): ContentLanguage {
   const region = (seller.regionName ?? '').toLowerCase();
   if (region.includes('quebec') || region.includes('québec')) return 'fr';
-  if (seller.countryId != null && COUNTRY_ID_TO_LOCALE[seller.countryId]) {
-    return COUNTRY_ID_TO_LOCALE[seller.countryId];
+  if (seller.countryId != null && COUNTRY_LANGUAGE[seller.countryId]) {
+    return COUNTRY_LANGUAGE[seller.countryId];
   }
-  return DEFAULT_LOCALE;
+  return DEFAULT_LANGUAGE;
 }

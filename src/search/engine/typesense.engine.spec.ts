@@ -22,11 +22,19 @@ describe('TypesenseSearchEngine', () => {
     };
   });
 
-  const run = (input: Partial<SearchInput>, excludeSellerId?: string) =>
+  const run = (
+    input: Partial<SearchInput>,
+    opts: {
+      language?: string;
+      country?: number;
+      excludeSellerId?: string;
+    } = {},
+  ) =>
     engine.search({
-      locale: 'es',
       input: { query: 'x', page: 1, pageSize: 20, ...input } as SearchInput,
-      excludeSellerId,
+      language: opts.language ?? 'es',
+      country: opts.country,
+      excludeSellerId: opts.excludeSellerId,
     });
 
   const lastParams = () => searchMock.mock.calls[0][0];
@@ -56,8 +64,23 @@ describe('TypesenseSearchEngine', () => {
     expect(res.items[0].relevanceScore).toBe(5);
   });
 
+  it('always filters by the selected language', async () => {
+    await run({}, { language: 'fr' });
+    expect(lastFilter()).toContain('language:=`fr`');
+  });
+
+  it("scopes to the searcher's country when provided", async () => {
+    await run({}, { country: 2 });
+    expect(lastFilter()).toContain('country:=2');
+  });
+
+  it('omits the country clause for guests (no country)', async () => {
+    await run({});
+    expect(lastFilter()).not.toContain('country:=');
+  });
+
   it('excludes the current seller via filter_by', async () => {
-    await run({ query: 'x' }, 'seller-1');
+    await run({}, { excludeSellerId: 'seller-1' });
     expect(lastFilter()).toContain('sellerId:!=`seller-1`');
   });
 

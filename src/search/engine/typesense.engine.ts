@@ -19,11 +19,7 @@ import {
   EngineSearchParams,
   EngineSearchResult,
 } from './search-engine.interface';
-import {
-  SUPPORTED_LOCALES,
-  Locale,
-  collectionFor,
-} from '../indexer/locale.config';
+import { CATALOG_COLLECTION } from '../indexer/locale.config';
 
 /** Fields matched by a free-text query, highest-weight first. */
 const QUERY_BY = 'name,brand,category,tags,description';
@@ -52,49 +48,46 @@ export class TypesenseSearchEngine implements SearchEngine {
   }
 
   async ensureCollections(): Promise<void> {
-    for (const locale of SUPPORTED_LOCALES) {
-      const name = collectionFor(locale);
-      try {
-        await this.client.collections(name).retrieve();
-      } catch (error) {
-        if (error instanceof Errors.ObjectNotFound) {
-          await this.client.collections().create(this.schemaFor(name));
-          this.logger.log(`Created Typesense collection ${name}`);
-        } else {
-          throw error;
-        }
+    try {
+      await this.client.collections(CATALOG_COLLECTION).retrieve();
+    } catch (error) {
+      if (error instanceof Errors.ObjectNotFound) {
+        await this.client.collections().create(this.schema());
+        this.logger.log(`Created Typesense collection ${CATALOG_COLLECTION}`);
+      } else {
+        throw error;
       }
     }
   }
 
-  async indexDocuments(locale: Locale, docs: CatalogDocument[]): Promise<void> {
+  async indexDocuments(docs: CatalogDocument[]): Promise<void> {
     if (docs.length === 0) return;
     try {
       await this.client
-        .collections<CatalogDocument>(collectionFor(locale))
+        .collections<CatalogDocument>(CATALOG_COLLECTION)
         .documents()
         .import(docs, { action: 'upsert' });
     } catch (error) {
       if (error instanceof Errors.ImportError) {
         this.logger.error(
-          `Some documents failed to index into ${collectionFor(locale)}`,
+          `Some documents failed to index into ${CATALOG_COLLECTION}`,
         );
       }
       throw error;
     }
   }
 
-  async deleteDocuments(locale: Locale, ids: string[]): Promise<void> {
+  async deleteDocuments(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     const filter = `id:[${ids.map((id) => `\`${id}\``).join(',')}]`;
     await this.client
-      .collections(collectionFor(locale))
+      .collections(CATALOG_COLLECTION)
       .documents()
       .delete({ filter_by: filter });
   }
 
   async search(params: EngineSearchParams): Promise<EngineSearchResult> {
-    const { locale, input, excludeSellerId } = params;
+    const { input } = params;
     const page = input.page ?? 1;
     const perPage = input.pageSize ?? 20;
 
@@ -102,7 +95,7 @@ export class TypesenseSearchEngine implements SearchEngine {
       q: input.query?.trim() || '*',
       query_by: QUERY_BY,
       query_by_weights: QUERY_BY_WEIGHTS,
-      filter_by: this.buildFilterBy(input, excludeSellerId),
+      filter_by: this.buildFilterBy(params),
       sort_by: this.buildSortBy(input.sortBy),
       facet_by: 'type,category,tags',
       max_facet_values: 20,
@@ -112,7 +105,7 @@ export class TypesenseSearchEngine implements SearchEngine {
     };
 
     const res: SearchResponse<CatalogDocument> = await this.client
-      .collections<CatalogDocument>(collectionFor(locale))
+      .collections<CatalogDocument>(CATALOG_COLLECTION)
       .documents()
       .search(searchParams, {});
 
@@ -134,9 +127,9 @@ export class TypesenseSearchEngine implements SearchEngine {
 
   // ---- helpers -------------------------------------------------------------
 
-  private schemaFor(name: string): CollectionCreateSchema {
+  private schema(): CollectionCreateSchema {
     return {
-      name,
+      name: CATALOG_COLLECTION,
       fields: [
         { name: 'entityId', type: 'int64' },
         { name: 'type', type: 'string', facet: true },
@@ -153,6 +146,8 @@ export class TypesenseSearchEngine implements SearchEngine {
         { name: 'rating', type: 'float', optional: true },
         { name: 'reviewCount', type: 'int32', optional: true },
         { name: 'sellerId', type: 'string', optional: true, facet: true },
+        { name: 'country', type: 'int32', optional: true, facet: true },
+        { name: 'language', type: 'string', facet: true },
         { name: 'createdAt', type: 'int64' },
       ],
       default_sorting_field: 'createdAt',
@@ -164,11 +159,18 @@ export class TypesenseSearchEngine implements SearchEngine {
     return `\`${value}\``;
   }
 
-  private buildFilterBy(
-    input: EngineSearchParams['input'],
-    excludeSellerId?: string,
-  ): string {
+  private buildFilterBy({
+    input,
+    language,
+    country,
+    excludeSellerId,
+  }: EngineSearchParams): string {
     const clauses: string[] = [];
+
+    // Always scope to the selected language; scope to the searcher's country
+    // when known (guests have none → results span countries).
+    clauses.push(`language:=${this.quote(language)}`);
+    if (country != null) clauses.push(`country:=${country}`);
 
     if (excludeSellerId) {
       clauses.push(`sellerId:!=${this.quote(excludeSellerId)}`);

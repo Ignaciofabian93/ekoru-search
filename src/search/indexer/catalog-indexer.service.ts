@@ -8,7 +8,7 @@ import {
   type SearchEngine,
   type CatalogDocument,
 } from '../engine/search-engine.interface';
-import { Locale, SUPPORTED_LOCALES, localeFromSeller } from './locale.config';
+import { languageFromSeller } from './locale.config';
 
 /**
  * Incremental sync window. The cron runs every 5 min and re-reads everything
@@ -17,12 +17,6 @@ import { Locale, SUPPORTED_LOCALES, localeFromSeller } from './locale.config';
  * "last run" cursor (no extra migration) in v1.
  */
 const SYNC_WINDOW_MS = 11 * 60 * 1000;
-
-/** A document plus the locale collection it belongs in. */
-interface LocatedDoc {
-  locale: Locale;
-  doc: CatalogDocument;
-}
 
 /** Raw row shared shape (seller locale columns joined onto every source). */
 interface SellerLocaleCols {
@@ -40,10 +34,10 @@ export class CatalogIndexerService {
     @Inject(SEARCH_ENGINE) private readonly engine: SearchEngine,
   ) {}
 
-  /** Full rebuild: (re)create collections and upsert every active item. */
+  /** Full rebuild: (re)create the collection and upsert every active item. */
   async reindexAll(): Promise<{ indexed: number }> {
     await this.engine.ensureCollections();
-    const located = [
+    const docs = [
       ...(await this.loadProducts(
         Prisma.sql`p."deletedAt" IS NULL AND p."isActive" = true`,
       )),
@@ -52,9 +46,9 @@ export class CatalogIndexerService {
       )),
       ...(await this.loadServices(Prisma.sql`s."isActive" = true`)),
     ];
-    await this.indexGrouped(located);
-    this.logger.log(`Reindex complete: ${located.length} documents`);
-    return { indexed: located.length };
+    await this.engine.indexDocuments(docs);
+    this.logger.log(`Reindex complete: ${docs.length} documents`);
+    return { indexed: docs.length };
   }
 
   /** Periodic catch-up: upsert recently-changed items, drop deactivated ones. */
@@ -75,10 +69,10 @@ export class CatalogIndexerService {
           Prisma.sql`s."isActive" = true AND s."updatedAt" >= ${since}`,
         )),
       ];
-      await this.indexGrouped(changed);
+      await this.engine.indexDocuments(changed);
 
       const removedIds = await this.loadDeactivatedIds(since);
-      await this.removeFromAllLocales(removedIds);
+      await this.engine.deleteDocuments(removedIds);
 
       if (changed.length || removedIds.length) {
         this.logger.log(
@@ -90,26 +84,9 @@ export class CatalogIndexerService {
     }
   }
 
-  // ---- grouping / engine calls --------------------------------------------
-
-  private async indexGrouped(located: LocatedDoc[]): Promise<void> {
-    for (const locale of SUPPORTED_LOCALES) {
-      const docs = located.filter((l) => l.locale === locale).map((l) => l.doc);
-      await this.engine.indexDocuments(locale, docs);
-    }
-  }
-
-  /** A removed item's locale may be unknown, so delete from every collection. */
-  private async removeFromAllLocales(ids: string[]): Promise<void> {
-    if (ids.length === 0) return;
-    for (const locale of SUPPORTED_LOCALES) {
-      await this.engine.deleteDocuments(locale, ids);
-    }
-  }
-
   // ---- loaders (reuse FullTextSearchStrategy SELECT shapes) ----------------
 
-  private async loadProducts(where: Prisma.Sql): Promise<LocatedDoc[]> {
+  private async loadProducts(where: Prisma.Sql): Promise<CatalogDocument[]> {
     const rows = await this.prisma.$queryRaw<
       (SellerLocaleCols & {
         id: number;
@@ -137,27 +114,28 @@ export class CatalogIndexerService {
     `;
 
     return rows.map((row) => ({
-      locale: localeFromSeller(row),
-      doc: {
-        id: `product_${row.id}`,
-        entityId: row.id,
-        type: SearchResultType.PRODUCT,
-        name: row.name,
-        description: row.description ?? undefined,
-        brand: row.brand ?? undefined,
-        category: row.category ?? undefined,
-        tags: row.tags ?? [],
-        images: row.images ?? [],
-        price: row.price ?? undefined,
-        offerPrice: row.offerPrice ?? undefined,
-        hasOffer: row.hasOffer ?? false,
-        sellerId: row.sellerId ?? undefined,
-        createdAt: this.toUnix(row.createdAt),
-      },
+      id: `product_${row.id}`,
+      entityId: row.id,
+      type: SearchResultType.PRODUCT,
+      name: row.name,
+      description: row.description ?? undefined,
+      brand: row.brand ?? undefined,
+      category: row.category ?? undefined,
+      tags: row.tags ?? [],
+      images: row.images ?? [],
+      price: row.price ?? undefined,
+      offerPrice: row.offerPrice ?? undefined,
+      hasOffer: row.hasOffer ?? false,
+      sellerId: row.sellerId ?? undefined,
+      country: row.countryId ?? undefined,
+      language: languageFromSeller(row),
+      createdAt: this.toUnix(row.createdAt),
     }));
   }
 
-  private async loadStoreProducts(where: Prisma.Sql): Promise<LocatedDoc[]> {
+  private async loadStoreProducts(
+    where: Prisma.Sql,
+  ): Promise<CatalogDocument[]> {
     const rows = await this.prisma.$queryRaw<
       (SellerLocaleCols & {
         id: number;
@@ -190,30 +168,29 @@ export class CatalogIndexerService {
     `;
 
     return rows.map((row) => ({
-      locale: localeFromSeller(row),
-      doc: {
-        id: `store_${row.id}`,
-        entityId: row.id,
-        type: SearchResultType.STORE_PRODUCT,
-        name: row.name,
-        description: row.description ?? undefined,
-        brand: row.brand ?? undefined,
-        category: row.category ?? undefined,
-        subcategory: row.subcategory ?? undefined,
-        tags: row.tags ?? [],
-        images: row.images ?? [],
-        price: row.price ?? undefined,
-        offerPrice: row.offerPrice ?? undefined,
-        hasOffer: row.hasOffer ?? false,
-        rating: row.rating ?? undefined,
-        reviewCount: row.reviewCount ?? undefined,
-        sellerId: row.sellerId ?? undefined,
-        createdAt: this.toUnix(row.createdAt),
-      },
+      id: `store_${row.id}`,
+      entityId: row.id,
+      type: SearchResultType.STORE_PRODUCT,
+      name: row.name,
+      description: row.description ?? undefined,
+      brand: row.brand ?? undefined,
+      category: row.category ?? undefined,
+      subcategory: row.subcategory ?? undefined,
+      tags: row.tags ?? [],
+      images: row.images ?? [],
+      price: row.price ?? undefined,
+      offerPrice: row.offerPrice ?? undefined,
+      hasOffer: row.hasOffer ?? false,
+      rating: row.rating ?? undefined,
+      reviewCount: row.reviewCount ?? undefined,
+      sellerId: row.sellerId ?? undefined,
+      country: row.countryId ?? undefined,
+      language: languageFromSeller(row),
+      createdAt: this.toUnix(row.createdAt),
     }));
   }
 
-  private async loadServices(where: Prisma.Sql): Promise<LocatedDoc[]> {
+  private async loadServices(where: Prisma.Sql): Promise<CatalogDocument[]> {
     const rows = await this.prisma.$queryRaw<
       (SellerLocaleCols & {
         id: number;
@@ -241,23 +218,22 @@ export class CatalogIndexerService {
     `;
 
     return rows.map((row) => ({
-      locale: localeFromSeller(row),
-      doc: {
-        id: `service_${row.id}`,
-        entityId: row.id,
-        type: SearchResultType.SERVICE,
-        name: row.name,
-        description: row.description ?? undefined,
-        category: row.category ?? undefined,
-        subcategory: row.subcategory ?? undefined,
-        tags: row.tags ?? [],
-        images: row.images ?? [],
-        price: row.price ?? undefined,
-        hasOffer: false,
-        rating: row.rating ?? undefined,
-        sellerId: row.sellerId ?? undefined,
-        createdAt: this.toUnix(row.createdAt),
-      },
+      id: `service_${row.id}`,
+      entityId: row.id,
+      type: SearchResultType.SERVICE,
+      name: row.name,
+      description: row.description ?? undefined,
+      category: row.category ?? undefined,
+      subcategory: row.subcategory ?? undefined,
+      tags: row.tags ?? [],
+      images: row.images ?? [],
+      price: row.price ?? undefined,
+      hasOffer: false,
+      rating: row.rating ?? undefined,
+      sellerId: row.sellerId ?? undefined,
+      country: row.countryId ?? undefined,
+      language: languageFromSeller(row),
+      createdAt: this.toUnix(row.createdAt),
     }));
   }
 

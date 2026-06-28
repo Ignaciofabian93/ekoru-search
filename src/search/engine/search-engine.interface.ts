@@ -3,12 +3,11 @@ import {
   SearchResultItem,
   SearchFacets,
 } from '../entities/search-result.entity';
-import { Locale } from '../indexer/locale.config';
 
 /**
  * A catalog item flattened for the search index. One document per
  * Product / StoreProduct / Service; `id` is namespaced so the three sources
- * coexist in the same per-locale collection.
+ * coexist in the single `catalog` collection.
  */
 export interface CatalogDocument {
   /** Namespaced doc id: `product_<id>` | `store_<id>` | `service_<id>`. */
@@ -30,13 +29,20 @@ export interface CatalogDocument {
   rating?: number;
   reviewCount?: number;
   sellerId?: string;
+  /** Seller's country id — results are scoped to the searcher's country. */
+  country?: number;
+  /** Item content language ('es' | 'en' | 'fr') — query filters by selection. */
+  language: string;
   /** Unix seconds — used as the default sorting field and for NEWEST sort. */
   createdAt: number;
 }
 
 export interface EngineSearchParams {
-  locale: Locale;
   input: SearchInput;
+  /** Selected language filter value ('es' | 'en' | 'fr'). */
+  language: string;
+  /** Searcher's country id (from their account). Absent for guests. */
+  country?: number;
   /** Authenticated caller, whose own listings are excluded from results. */
   excludeSellerId?: string;
 }
@@ -57,13 +63,13 @@ export const SEARCH_ENGINE = Symbol('SEARCH_ENGINE');
  * touching the GraphQL layer.
  */
 export interface SearchEngine {
-  /** Create any missing per-locale collections. Safe to call repeatedly. */
+  /** Create the catalog collection if missing. Safe to call repeatedly. */
   ensureCollections(): Promise<void>;
-  /** Upsert documents into a locale's collection. */
-  indexDocuments(locale: Locale, docs: CatalogDocument[]): Promise<void>;
-  /** Remove documents (by namespaced id) from a locale's collection. */
-  deleteDocuments(locale: Locale, ids: string[]): Promise<void>;
-  /** Run a query against one locale's collection. */
+  /** Upsert documents into the catalog collection. */
+  indexDocuments(docs: CatalogDocument[]): Promise<void>;
+  /** Remove documents (by namespaced id) from the catalog collection. */
+  deleteDocuments(ids: string[]): Promise<void>;
+  /** Run a query (scoped by country + language). */
   search(params: EngineSearchParams): Promise<EngineSearchResult>;
   /** Liveness probe for the health endpoint. */
   health(): Promise<boolean>;
