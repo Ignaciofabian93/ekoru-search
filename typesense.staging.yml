@@ -1,0 +1,49 @@
+name: ekoru-typesense-staging
+
+# Standalone, long-lived Typesense node for the search subgraph (STAGING).
+#
+# Deploy ONCE per server, independently of app deploys:
+#   docker compose -f typesense.staging.yml up -d
+#
+# See typesense.prod.yml for the full rationale. Separate instance from prod so
+# the two environments never share an index.
+#
+# Requires a secrets file `.env.typesense.staging` next to this file containing:
+#   TYPESENSE_API_KEY=<the SAME key the app uses in its .env.staging>
+#
+# The app's .env.staging must then set:
+#   SEARCH_ENGINE=typesense
+#   TYPESENSE_HOST=ekoru-typesense-staging
+#   TYPESENSE_PORT=8108
+#   TYPESENSE_PROTOCOL=http
+#   TYPESENSE_API_KEY=<same key as above>
+
+services:
+  typesense:
+    image: typesense/typesense:27.1
+    container_name: ekoru-typesense-staging
+    restart: always
+    env_file:
+      - .env.typesense.staging
+    environment:
+      TYPESENSE_DATA_DIR: /data
+      TYPESENSE_ENABLE_CORS: "true"
+    volumes:
+      - typesense-staging-data:/data
+    networks:
+      - ekoru-staging-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.15"
+          memory: 256M
+
+volumes:
+  typesense-staging-data:
+
+networks:
+  ekoru-staging-network:
+    external: true

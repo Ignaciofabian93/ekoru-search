@@ -131,9 +131,10 @@ visible in their profile via the per-subgraph `get…BySeller` queries.
 
 ## 6. Running & verifying
 
+### Local dev
 ```bash
-# 1. start Typesense
-docker compose -f ekoru-search/docker-compose.yml up -d typesense
+# 1. start Typesense (dev defaults: localhost:8108, key "dev-typesense-key")
+docker compose -f docker-compose.yml up -d typesense
 
 # 2. set env (SEARCH_ENGINE=typesense, TYPESENSE_*), then full load
 npm run reindex          # or call the reindexCatalog mutation with an x-admin-id header
@@ -149,6 +150,42 @@ npm run reindex          # or call the reindexCatalog mutation with an x-admin-i
 # health
 curl localhost:<PORT>/health    # { "status": "ok", "typesense": "ok" }
 ```
+
+### Server (staging / prod)
+Typesense runs as a **standalone, long-lived stack**, separate from the app deploy, so
+that `docker compose -f compose.prod.yml up -d --force-recreate` (run on every code deploy)
+never restarts the search engine. The app and Typesense communicate over the shared
+external docker network the app already uses (`ekoru-network` prod / `ekoru-staging-network`
+staging); Typesense publishes **no host port**.
+
+1. **Bring Typesense up once per server** (not in the Jenkinsfile, not in `compose.*.yml`):
+   ```bash
+   # place .env.typesense.<env> next to the file with TYPESENSE_API_KEY=...
+   docker compose -f typesense.prod.yml up -d        # or typesense.staging.yml
+   ```
+   Container name: `ekoru-typesense` (prod) / `ekoru-typesense-staging` (staging).
+   Data persists in the `typesense-*-data` volume across app deploys.
+
+2. **Point the app at it** via its server-side env file
+   (`/opt/ekoru/secrets/ekoru-search/.env.{staging,prod}`):
+   ```
+   SEARCH_ENGINE=typesense
+   TYPESENSE_HOST=ekoru-typesense           # ekoru-typesense-staging on staging
+   TYPESENSE_PORT=8108
+   TYPESENSE_PROTOCOL=http
+   TYPESENSE_API_KEY=<same key as .env.typesense.*>
+   LOCALE_COUNTRY_MAP=<countryId:locale,...>   # see §8 onboarding
+   ```
+   The app deploys normally through Jenkins (`compose.staging.yml` / `compose.prod.yml`);
+   no Typesense changes are needed in the pipeline.
+
+3. **Initial index load.** The prod image is built without devDependencies, so
+   `npm run reindex` (ts-node) is **not** available in the container. Trigger the load via
+   the GraphQL mutation instead, once after the first deploy:
+   ```
+   mutation { reindexCatalog }      # send header x-admin-id: <admin>
+   ```
+   Thereafter the `@Cron` keeps the index in sync.
 
 ## 7. GraphQL surface
 

@@ -1,0 +1,55 @@
+name: ekoru-typesense-prod
+
+# Standalone, long-lived Typesense node for the search subgraph (PRODUCTION).
+#
+# Deploy ONCE per server, independently of app deploys:
+#   docker compose -f typesense.prod.yml up -d
+#
+# It is intentionally NOT part of compose.prod.yml: the app deploy runs
+# `docker compose -f compose.prod.yml up -d --force-recreate`, which would
+# otherwise restart the search engine (and reload its index) on every code
+# deploy. Keeping Typesense in its own stack gives it an independent lifecycle.
+#
+# Connectivity: joins the shared external `ekoru-network` (the same network the
+# app joins), so the app reaches it by container name. No published port — the
+# engine is only reachable from inside the network.
+#
+# Requires a secrets file `.env.typesense.prod` next to this file containing:
+#   TYPESENSE_API_KEY=<the SAME key the app uses in its .env.prod>
+#
+# The app's .env.prod must then set:
+#   SEARCH_ENGINE=typesense
+#   TYPESENSE_HOST=ekoru-typesense
+#   TYPESENSE_PORT=8108
+#   TYPESENSE_PROTOCOL=http
+#   TYPESENSE_API_KEY=<same key as above>
+
+services:
+  typesense:
+    image: typesense/typesense:27.1
+    container_name: ekoru-typesense
+    restart: always
+    env_file:
+      - .env.typesense.prod
+    environment:
+      TYPESENSE_DATA_DIR: /data
+      TYPESENSE_ENABLE_CORS: "true"
+    volumes:
+      - typesense-prod-data:/data
+    networks:
+      - ekoru-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+
+volumes:
+  typesense-prod-data:
+
+networks:
+  ekoru-network:
+    external: true
