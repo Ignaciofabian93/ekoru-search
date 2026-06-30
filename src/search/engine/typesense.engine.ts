@@ -104,10 +104,25 @@ export class TypesenseSearchEngine implements SearchEngine {
       highlight_full_fields: 'name,description',
     };
 
-    const res: SearchResponse<CatalogDocument> = await this.client
-      .collections<CatalogDocument>(CATALOG_COLLECTION)
-      .documents()
-      .search(searchParams, {});
+    let res: SearchResponse<CatalogDocument>;
+    try {
+      res = await this.client
+        .collections<CatalogDocument>(CATALOG_COLLECTION)
+        .documents()
+        .search(searchParams, {});
+    } catch (error) {
+      // The collection only gets created by a reindex / the sync cron, not by
+      // querying. Before the first index it doesn't exist — degrade to empty
+      // results so the federated query succeeds instead of 500ing. (A genuine
+      // connectivity/auth error is a different exception and still propagates.)
+      if (error instanceof Errors.ObjectNotFound) {
+        this.logger.warn(
+          `Collection "${CATALOG_COLLECTION}" not found — returning empty results. Run a reindex to populate it.`,
+        );
+        return { items: [], found: 0, facets: undefined };
+      }
+      throw error;
+    }
 
     return {
       items: (res.hits ?? []).map((hit) => this.toResultItem(hit)),
