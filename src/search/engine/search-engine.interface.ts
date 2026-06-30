@@ -41,7 +41,7 @@ export interface EngineSearchParams {
   input: SearchInput;
   /** Selected language filter value ('es' | 'en' | 'fr'). */
   language: string;
-  /** Searcher's country id (from their account). Absent for guests. */
+  /** Country id from the client's selected market. Absent if the code was unknown. */
   country?: number;
   /** Authenticated caller, whose own listings are excluded from results. */
   excludeSellerId?: string;

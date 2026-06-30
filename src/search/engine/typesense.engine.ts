@@ -167,8 +167,11 @@ export class TypesenseSearchEngine implements SearchEngine {
   }: EngineSearchParams): string {
     const clauses: string[] = [];
 
-    // Always scope to the selected language; scope to the searcher's country
-    // when known (guests have none → results span countries).
+    // Scope to the client-selected language and country (both sent on every
+    // query). A bilingual market like Canada keeps its en and fr items in this
+    // same collection; the language clause is what picks the right slice. An
+    // unresolved country (unknown code) is omitted so results span countries
+    // rather than silently return nothing.
     clauses.push(`language:=${this.quote(language)}`);
     if (country != null) clauses.push(`country:=${country}`);
 

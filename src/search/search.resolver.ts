@@ -30,22 +30,23 @@ export class SearchResolver {
   })
   async search(
     @Args('input') input: SearchInput,
-    @Args('language', { type: () => Language, defaultValue: Language.ES })
-    language: Language,
+    @Args('language', { type: () => Language }) language: Language,
+    @Args('country', { type: () => String }) country: string,
     @Context() ctx: { sellerId?: string },
-    @Args('country', { type: () => String, nullable: true }) country?: string,
     @Args('userId', { nullable: true }) userId?: string,
     @Args('sessionId', { nullable: true }) sessionId?: string,
   ): Promise<SearchResponse> {
+    // `language` and `country` (ISO code) are always supplied by the client —
+    // web and mobile alike — and together scope every search: items in that
+    // country, indexed under that language. The JWT seller id only hides the
+    // caller's own listings; it no longer decides the market.
     return this.searchService.search({
       input,
       language,
+      countryCode: country,
       userId,
       sessionId,
       excludeSellerId: ctx.sellerId,
-      // Guest country selection (ISO code), sent as an arg so web + mobile work
-      // the same way. Ignored for authenticated users (account country wins).
-      guestCountryCode: country,
     });
   }
 

@@ -20,19 +20,25 @@ describe('locale.config', () => {
   });
 
   describe('languageFromSeller', () => {
-    it('routes Québec sellers to French regardless of country', () => {
-      expect(languageFromSeller({ countryId: 2, regionName: 'Québec' })).toBe(
+    it("uses the seller's explicit content language, overriding country", () => {
+      expect(languageFromSeller({ contentLanguage: 'FR', countryId: 1 })).toBe(
         'fr',
       );
       expect(
-        languageFromSeller({ countryId: 2, regionName: 'Quebec City' }),
-      ).toBe('fr');
+        languageFromSeller({ contentLanguage: 'en', countryId: 999 }),
+      ).toBe('en');
     });
 
-    it('defaults to ES when no country/region mapping matches', () => {
+    it('ignores content languages search does not index (PT/DE)', () => {
+      // Falls through to the country/default rules rather than indexing as pt/de.
       expect(
-        languageFromSeller({ countryId: 999, regionName: 'Santiago' }),
+        languageFromSeller({ contentLanguage: 'PT', countryId: 999 }),
       ).toBe(DEFAULT_LANGUAGE);
+    });
+
+    it('falls back to ES when no content language or country mapping matches', () => {
+      // COUNTRY_LANGUAGE_MAP is unset in tests, so the country rule yields ES.
+      expect(languageFromSeller({ countryId: 2 })).toBe(DEFAULT_LANGUAGE);
       expect(languageFromSeller({})).toBe(DEFAULT_LANGUAGE);
     });
   });

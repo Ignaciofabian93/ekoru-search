@@ -158,33 +158,37 @@ describe('SearchService', () => {
       );
     });
 
-    it("excludes own listings and scopes to the seller's account country", async () => {
+    it("excludes the caller's own listings without changing the country scope", async () => {
       mockSearchEngine.search.mockResolvedValue({ items: [], found: 0 });
       mockPrismaService.searchLog.create.mockResolvedValue({ id: 3 });
-      // resolveSellerCountry → seller-123 is in country 2
-      mockPrismaService.$queryRaw.mockResolvedValueOnce([{ countryId: 2 }]);
+      // Country comes from the client code ("CA" → id 2), not the seller id.
+      mockPrismaService.$queryRaw.mockResolvedValueOnce([{ id: 2 }]);
 
-      await service.search({ input: baseInput, excludeSellerId: 'seller-123' });
+      await service.search({
+        input: baseInput,
+        excludeSellerId: 'seller-123',
+        countryCode: 'CA',
+      });
 
       expect(mockSearchEngine.search).toHaveBeenCalledWith(
         expect.objectContaining({ excludeSellerId: 'seller-123', country: 2 }),
       );
     });
 
-    it('scopes a guest to their selected country (ISO code → id)', async () => {
+    it('scopes search to the client country code (ISO → id)', async () => {
       mockSearchEngine.search.mockResolvedValue({ items: [], found: 0 });
       mockPrismaService.searchLog.create.mockResolvedValue({ id: 7 });
       // resolveCountryIdFromCode → "CL" is country id 1
       mockPrismaService.$queryRaw.mockResolvedValueOnce([{ id: 1 }]);
 
-      await service.search({ input: baseInput, guestCountryCode: 'CL' });
+      await service.search({ input: baseInput, countryCode: 'CL' });
 
       expect(mockSearchEngine.search).toHaveBeenCalledWith(
         expect.objectContaining({ country: 1, excludeSellerId: undefined }),
       );
     });
 
-    it('leaves a guest without a country unscoped (language-only)', async () => {
+    it('leaves search unscoped when no country code is given (language-only)', async () => {
       mockSearchEngine.search.mockResolvedValue({ items: [], found: 0 });
       mockPrismaService.searchLog.create.mockResolvedValue({ id: 8 });
 
@@ -193,6 +197,8 @@ describe('SearchService', () => {
       expect(mockSearchEngine.search).toHaveBeenCalledWith(
         expect.objectContaining({ country: undefined }),
       );
+      // No country code → no Country lookup is issued.
+      expect(mockPrismaService.$queryRaw).not.toHaveBeenCalled();
     });
 
     it('computes pagination flags from the engine total', async () => {

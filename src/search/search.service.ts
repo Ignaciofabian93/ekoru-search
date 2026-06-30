@@ -51,8 +51,8 @@ export class SearchService {
     sessionId?: string;
     excludeSellerId?: string;
     language?: Language;
-    /** Guest country selection (ISO code); used only when not authenticated. */
-    guestCountryCode?: string;
+    /** Client-selected market as an ISO country code (e.g. "CA"). */
+    countryCode?: string;
   }): Promise<SearchResponse> {
     if (this.config.get<string>('searchEngine') === 'postgres') {
       return this.searchViaPostgres(args);
@@ -61,9 +61,10 @@ export class SearchService {
   }
 
   /**
-   * Typesense-backed search. Scopes results to the selected `language` and, for
-   * an authenticated user, to their own account country (all transactions are
-   * country-local). Guests (no seller id) have no country → language-only.
+   * Typesense-backed search. Scopes results to the `language` and `country`
+   * the client selected: the country code is resolved to its Country id and
+   * the catalog is filtered to that market + language. The same path serves web
+   * and mobile, authenticated or guest — the seller id only excludes own items.
    */
   private async searchViaEngine({
     input,
@@ -71,27 +72,21 @@ export class SearchService {
     sessionId,
     excludeSellerId,
     language,
-    guestCountryCode,
+    countryCode,
   }: {
     input: SearchInput;
     userId?: string;
     sessionId?: string;
     excludeSellerId?: string;
     language?: Language;
-    guestCountryCode?: string;
+    countryCode?: string;
   }): Promise<SearchResponse> {
     const startTime = Date.now();
     const page = input.page ?? 1;
     const pageSize = input.pageSize ?? 20;
 
-    // Authenticated users are scoped to their account country (never a client
-    // arg). Guests are scoped to their selected country (ISO code → id), or
-    // unscoped (language-only) when none was chosen.
-    const country = excludeSellerId
-      ? await this.resolveSellerCountry(excludeSellerId)
-      : guestCountryCode
-        ? await this.resolveCountryIdFromCode(guestCountryCode)
-        : undefined;
+    // Market scope comes straight from the client's country code (ISO → id).
+    const country = await this.resolveCountryIdFromCode(countryCode);
 
     const { items, found, facets } = await this.engine.search({
       input,
@@ -128,32 +123,17 @@ export class SearchService {
   }
 
   /**
-   * Look up a seller's country id from the shared DB. Used to scope search
-   * results to the authenticated user's market. Returns undefined if unknown.
-   */
-  private async resolveSellerCountry(
-    sellerId: string,
-  ): Promise<number | undefined> {
-    try {
-      const rows = await this.prisma.$queryRaw<{ countryId: number | null }[]>`
-        SELECT "countryId" FROM "Seller" WHERE id = ${sellerId} LIMIT 1
-      `;
-      return rows[0]?.countryId ?? undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Map an ISO country code (e.g. "CL") to its Country id, for scoping a guest's
-   * search to their selected country. Returns undefined if unknown.
+   * Map an ISO country code (e.g. "CA") to its Country id, to scope search to
+   * the client's selected market. Case-insensitive; returns undefined for a
+   * missing/unknown code (the query then spans countries).
    */
   private async resolveCountryIdFromCode(
-    code: string,
+    code?: string,
   ): Promise<number | undefined> {
+    if (!code) return undefined;
     try {
       const rows = await this.prisma.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "Country" WHERE code = ${code} LIMIT 1
+        SELECT id FROM "Country" WHERE code = ${code.toUpperCase()} LIMIT 1
       `;
       return rows[0]?.id ?? undefined;
     } catch {

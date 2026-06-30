@@ -45,18 +45,22 @@ function parseCountryMap(raw?: string): Record<number, ContentLanguage> {
 const COUNTRY_LANGUAGE = parseCountryMap(process.env.COUNTRY_LANGUAGE_MAP);
 
 /**
- * Derive an item's content language at index time from its seller's
- * country/region. This is the single onboarding point for new markets:
- *  - a region named like "Québec"/"Quebec" → `fr` (Canadian French market);
- *  - else the seller's country via `COUNTRY_LANGUAGE_MAP`;
- *  - else `DEFAULT_LANGUAGE`.
+ * Derive an item's content language at index time from its seller, in order:
+ *  1. the seller's explicit `contentLanguage` (set at onboarding, editable) —
+ *     the single source of truth, so bilingual markets work without guessing
+ *     geography (a francophone seller anywhere is `fr`, an anglophone one `en`);
+ *  2. else the seller's country default via `COUNTRY_LANGUAGE_MAP`;
+ *  3. else `DEFAULT_LANGUAGE`.
+ *
+ * `contentLanguage` arrives as the Prisma `Language` enum (e.g. "FR"); values
+ * search doesn't index (PT/DE) fall through to the country/default rules.
  */
 export function languageFromSeller(seller: {
+  contentLanguage?: string | null;
   countryId?: number | null;
-  regionName?: string | null;
 }): ContentLanguage {
-  const region = (seller.regionName ?? '').toLowerCase();
-  if (region.includes('quebec') || region.includes('québec')) return 'fr';
+  const explicit = (seller.contentLanguage ?? '').toLowerCase();
+  if (isLanguage(explicit)) return explicit;
   if (seller.countryId != null && COUNTRY_LANGUAGE[seller.countryId]) {
     return COUNTRY_LANGUAGE[seller.countryId];
   }

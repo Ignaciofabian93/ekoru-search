@@ -55,10 +55,10 @@ model SearchSession {
   sessionId      String
   startedAt      DateTime  @default(now())
   endedAt        DateTime?
-  searchCount    Int      @default(0)
-  clickedResults Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  searchCount    Int       @default(0)
+  clickedResults Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([sessionId])
   @@index([startedAt])

@@ -22,7 +22,7 @@ const SYNC_WINDOW_MS = 11 * 60 * 1000;
 interface SellerLocaleCols {
   sellerId: string | null;
   countryId: number | null;
-  regionName: string | null;
+  contentLanguage: string | null;
 }
 
 @Injectable()
@@ -105,11 +105,10 @@ export class CatalogIndexerService {
       SELECT p.id, p.name, p.description, p.price, p."offerPrice", p."hasOffer",
              p.images, p.brand, p.interests AS tags, p."createdAt",
              pc."productCategoryName" AS category,
-             p."sellerId", s."countryId", r.region AS "regionName"
+             p."sellerId", s."countryId", s."contentLanguage"
       FROM "Product" p
       LEFT JOIN "ProductCategory" pc ON p."productCategoryId" = pc.id
       LEFT JOIN "Seller" s ON p."sellerId" = s.id
-      LEFT JOIN "Region" r ON s."regionId" = r.id
       WHERE ${where}
     `;
 
@@ -158,12 +157,11 @@ export class CatalogIndexerService {
              sp.images, sp.brand, sp.tags, sp.ratings AS rating,
              sp."reviewsNumber" AS "reviewCount", sp."createdAt",
              ssc."subCategory" AS subcategory, sc.category AS category,
-             sp."sellerId", s."countryId", r.region AS "regionName"
+             sp."sellerId", s."countryId", s."contentLanguage"
       FROM "StoreProduct" sp
       LEFT JOIN "StoreSubCategory" ssc ON sp."subcategoryId" = ssc.id
       LEFT JOIN "StoreCategory" sc ON ssc."storeCategoryId" = sc.id
       LEFT JOIN "Seller" s ON sp."sellerId" = s.id
-      LEFT JOIN "Region" r ON s."regionId" = r.id
       WHERE ${where}
     `;
 
@@ -208,12 +206,11 @@ export class CatalogIndexerService {
       SELECT s.id, s.name, s.description, s."basePrice" AS price, s.images, s.tags,
              s."averageRating" AS rating, s."createdAt",
              sc."subCategory" AS subcategory, scat.category AS category,
-             s."sellerId", sel."countryId", r.region AS "regionName"
+             s."sellerId", sel."countryId", sel."contentLanguage"
       FROM "Service" s
       LEFT JOIN "ServiceSubCategory" sc ON s."subcategoryId" = sc.id
       LEFT JOIN "ServiceCategory" scat ON sc."serviceCategoryId" = scat.id
       LEFT JOIN "Seller" sel ON s."sellerId" = sel.id
-      LEFT JOIN "Region" r ON sel."regionId" = r.id
       WHERE ${where}
     `;
 
