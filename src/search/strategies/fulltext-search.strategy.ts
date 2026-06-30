@@ -30,10 +30,9 @@ export class FullTextSearchStrategy {
     const maxPriceCondition = filters.maxPrice
       ? Prisma.sql`AND p.price <= ${filters.maxPrice}`
       : Prisma.empty;
-    const hasOfferCondition =
-      filters.hasOffer !== undefined
-        ? Prisma.sql`AND p."hasOffer" = ${filters.hasOffer}`
-        : Prisma.empty;
+    // Marketplace products have no offer columns (that's StoreProduct), so the
+    // hasOffer filter never applies here.
+    const hasOfferCondition = Prisma.empty;
     // Hide the current user's own products from their search results.
     const excludeSellerCondition = filters.excludeSellerId
       ? Prisma.sql`AND p."sellerId" <> ${filters.excludeSellerId}`
@@ -45,8 +44,6 @@ export class FullTextSearchStrategy {
         p.name,
         p.description,
         p.price,
-        p."offerPrice",
-        p."hasOffer",
         p.images,
         p.brand,
         p."sellerId",
@@ -80,8 +77,8 @@ export class FullTextSearchStrategy {
       name: p.name,
       description: p.description,
       price: p.price,
-      offerPrice: p.offerPrice,
-      hasOffer: p.hasOffer,
+      offerPrice: undefined,
+      hasOffer: false,
       images: p.images || [],
       category: p.category,
       subcategory: undefined,

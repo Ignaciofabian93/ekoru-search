@@ -93,8 +93,6 @@ export class CatalogIndexerService {
         name: string;
         description: string | null;
         price: number | null;
-        offerPrice: number | null;
-        hasOffer: boolean | null;
         images: string[] | null;
         brand: string | null;
         tags: string[] | null;
@@ -102,7 +100,7 @@ export class CatalogIndexerService {
         createdAt: Date;
       })[]
     >`
-      SELECT p.id, p.name, p.description, p.price, p."offerPrice", p."hasOffer",
+      SELECT p.id, p.name, p.description, p.price,
              p.images, p.brand, p.interests AS tags, p."createdAt",
              pc."productCategoryName" AS category,
              p."sellerId", s."countryId", s."contentLanguage"
@@ -123,8 +121,8 @@ export class CatalogIndexerService {
       tags: row.tags ?? [],
       images: row.images ?? [],
       price: row.price ?? undefined,
-      offerPrice: row.offerPrice ?? undefined,
-      hasOffer: row.hasOffer ?? false,
+      // Marketplace products have no offer concept — that's StoreProduct only.
+      hasOffer: false,
       sellerId: row.sellerId ?? undefined,
       country: row.countryId ?? undefined,
       language: languageFromSeller(row),
