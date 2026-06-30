@@ -102,10 +102,11 @@ export class CatalogIndexerService {
     >`
       SELECT p.id, p.name, p.description, p.price,
              p.images, p.brand, p.interests AS tags, p."createdAt",
-             pc."productCategoryName" AS category,
+             pct.name AS category,
              p."sellerId", s."countryId", s."contentLanguage"
       FROM "Product" p
-      LEFT JOIN "ProductCategory" pc ON p."productCategoryId" = pc.id
+      LEFT JOIN "ProductCategoryTranslation" pct
+        ON pct."productCategoryId" = p."productCategoryId" AND pct.language::text = 'ES'
       LEFT JOIN "Seller" s ON p."sellerId" = s.id
       WHERE ${where}
     `;
@@ -152,13 +153,16 @@ export class CatalogIndexerService {
       })[]
     >`
       SELECT sp.id, sp.name, sp.description, sp.price, sp."offerPrice", sp."hasOffer",
-             sp.images, sp.brand, sp.tags, sp.ratings AS rating,
+             sp.images, sp.brand, sp.tags, sp."averageRating" AS rating,
              sp."reviewsNumber" AS "reviewCount", sp."createdAt",
-             ssc."subCategory" AS subcategory, sc.category AS category,
+             ssct.name AS subcategory, sct.name AS category,
              sp."sellerId", s."countryId", s."contentLanguage"
       FROM "StoreProduct" sp
-      LEFT JOIN "StoreSubCategory" ssc ON sp."subcategoryId" = ssc.id
-      LEFT JOIN "StoreCategory" sc ON ssc."storeCategoryId" = sc.id
+      LEFT JOIN "StoreSubCategory" ssc ON sp."subCategoryId" = ssc.id
+      LEFT JOIN "StoreSubCategoryTranslation" ssct
+        ON ssct."storeSubCategoryId" = ssc.id AND ssct.language::text = 'ES'
+      LEFT JOIN "StoreCategoryTranslation" sct
+        ON sct."storeCategoryId" = ssc."storeCategoryId" AND sct.language::text = 'ES'
       LEFT JOIN "Seller" s ON sp."sellerId" = s.id
       WHERE ${where}
     `;
@@ -203,11 +207,14 @@ export class CatalogIndexerService {
     >`
       SELECT s.id, s.name, s.description, s."basePrice" AS price, s.images, s.tags,
              s."averageRating" AS rating, s."createdAt",
-             sc."subCategory" AS subcategory, scat.category AS category,
+             ssct."subCategory" AS subcategory, sctt.category AS category,
              s."sellerId", sel."countryId", sel."contentLanguage"
       FROM "Service" s
       LEFT JOIN "ServiceSubCategory" sc ON s."subcategoryId" = sc.id
-      LEFT JOIN "ServiceCategory" scat ON sc."serviceCategoryId" = scat.id
+      LEFT JOIN "ServiceSubCategoryTranslation" ssct
+        ON ssct."serviceSubCategoryId" = sc.id AND ssct.language::text = 'ES'
+      LEFT JOIN "ServiceCategoryTranslation" sctt
+        ON sctt."serviceCategoryId" = sc."serviceCategoryId" AND sctt.language::text = 'ES'
       LEFT JOIN "Seller" sel ON s."sellerId" = sel.id
       WHERE ${where}
     `;
