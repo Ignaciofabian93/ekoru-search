@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { SearchResolver } from './search.resolver';
+import { SearchResultResolver } from './search-result.resolver';
 import { PrismaModule } from '../prisma/prisma.module';
 import { FullTextSearchStrategy } from './strategies/fulltext-search.strategy';
 import { TrendingService } from './services/trending.service';
@@ -13,6 +14,7 @@ import { CatalogIndexerService } from './indexer/catalog-indexer.service';
   providers: [
     SearchService,
     SearchResolver,
+    SearchResultResolver,
     FullTextSearchStrategy,
     TrendingService,
     // Search engine (Typesense) behind the swappable SEARCH_ENGINE port.

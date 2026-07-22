@@ -4,17 +4,17 @@ import {
   Int,
   Float,
   registerEnumType,
-} from "@nestjs/graphql";
+} from '@nestjs/graphql';
 
 export enum SearchResultType {
-  PRODUCT = "PRODUCT",
-  STORE_PRODUCT = "STORE_PRODUCT",
-  SERVICE = "SERVICE",
+  PRODUCT = 'PRODUCT',
+  STORE_PRODUCT = 'STORE_PRODUCT',
+  SERVICE = 'SERVICE',
 }
 
 registerEnumType(SearchResultType, {
-  name: "SearchResultType",
-  description: "Type of search result item",
+  name: 'SearchResultType',
+  description: 'Type of search result item',
 });
 
 @ObjectType()
