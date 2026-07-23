@@ -1,6 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
-import { PrismaService } from "../../prisma/prisma.service";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
 export class TrendingService {
@@ -12,7 +12,7 @@ export class TrendingService {
   @Cron(CronExpression.EVERY_HOUR)
   async updateTrendingScores() {
     try {
-      this.logger.log("Updating trending search scores...");
+      this.logger.log('Updating trending search scores...');
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -50,10 +50,10 @@ export class TrendingService {
       });
 
       this.logger.log(
-        `Trending scores updated. Reset ${resetCount.count} old scores.`
+        `Trending scores updated. Reset ${resetCount.count} old scores.`,
       );
     } catch (error) {
-      this.logger.error("Error updating trending scores:", error);
+      this.logger.error('Error updating trending scores:', error);
     }
   }
 
@@ -61,7 +61,7 @@ export class TrendingService {
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async cleanupOldSearchLogs() {
     try {
-      this.logger.log("Cleaning up old search logs...");
+      this.logger.log('Cleaning up old search logs...');
       const threeMonthsAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
       // Delete search logs older than 3 months
@@ -73,7 +73,7 @@ export class TrendingService {
 
       this.logger.log(`Deleted ${deleted.count} old search logs.`);
     } catch (error) {
-      this.logger.error("Error cleaning up search logs:", error);
+      this.logger.error('Error cleaning up search logs:', error);
     }
   }
 
@@ -81,12 +81,12 @@ export class TrendingService {
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async updateSearchSuggestions() {
     try {
-      this.logger.log("Updating search suggestions...");
+      this.logger.log('Updating search suggestions...');
       const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
       // Get popular queries from the last week
       const popularQueries = await this.prisma.searchLog.groupBy({
-        by: ["query"],
+        by: ['query'],
         where: {
           createdAt: { gte: oneWeekAgo },
           resultCount: { gt: 0 }, // Only queries that returned results
@@ -96,7 +96,7 @@ export class TrendingService {
         },
         orderBy: {
           _count: {
-            query: "desc",
+            query: 'desc',
           },
         },
         take: 100,
@@ -120,7 +120,7 @@ export class TrendingService {
 
       this.logger.log(`Updated ${popularQueries.length} search suggestions.`);
     } catch (error) {
-      this.logger.error("Error updating search suggestions:", error);
+      this.logger.error('Error updating search suggestions:', error);
     }
   }
 
@@ -128,7 +128,7 @@ export class TrendingService {
   @Cron(CronExpression.EVERY_WEEK)
   async deactivateUnpopularSuggestions() {
     try {
-      this.logger.log("Deactivating unpopular search suggestions...");
+      this.logger.log('Deactivating unpopular search suggestions...');
       const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
       // Deactivate suggestions that haven't been updated in 2 weeks
@@ -143,10 +143,10 @@ export class TrendingService {
       });
 
       this.logger.log(
-        `Deactivated ${deactivated.count} unpopular suggestions.`
+        `Deactivated ${deactivated.count} unpopular suggestions.`,
       );
     } catch (error) {
-      this.logger.error("Error deactivating suggestions:", error);
+      this.logger.error('Error deactivating suggestions:', error);
     }
   }
 }
