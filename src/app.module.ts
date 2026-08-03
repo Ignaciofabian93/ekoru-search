@@ -9,6 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { PrismaModule } from './prisma/prisma.module';
 import { SearchModule } from './search/search.module';
+import { AdminSearchModule } from './adminSearch';
 import { DateTimeScalar, JSONScalar } from './graphql/scalars';
 import configuration from './config/configuration';
 
@@ -62,6 +63,7 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 
     // Feature modules
     SearchModule,
+    AdminSearchModule, // platform-admin CRUD over search config tables
   ],
   controllers: [HealthController],
   providers: [DateTimeScalar, JSONScalar],
