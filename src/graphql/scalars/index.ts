@@ -2,25 +2,12 @@ import { Kind } from 'graphql';
 import { Scalar, CustomScalar } from '@nestjs/graphql';
 import GraphQLJSON from 'graphql-type-json';
 
-@Scalar('DateTime')
-export class DateTimeScalar implements CustomScalar<string, Date | null> {
-  description = 'Date custom scalar type';
-
-  parseValue(value: string): Date {
-    return new Date(value);
-  }
-
-  serialize(value: Date): string {
-    return value instanceof Date ? value.toISOString() : value;
-  }
-
-  parseLiteral(ast: any): Date | null {
-    if (ast.kind === Kind.STRING) {
-      return new Date(ast.value);
-    }
-    return null;
-  }
-}
+/**
+ * No custom `DateTime` scalar here on purpose: `@Field(() => Date)` already maps
+ * to Nest's built-in GraphQLISODateTime, which is also named "DateTime".
+ * Registering our own would put two types with that name in the schema and the
+ * federated schema build fails at boot.
+ */
 
 @Scalar('JSON')
 export class JSONScalar implements CustomScalar<any, any> {
