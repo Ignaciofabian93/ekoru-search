@@ -25,6 +25,21 @@ interface SellerLocaleCols {
   contentLanguage: string | null;
 }
 
+/**
+ * A marketplace product is searchable only while it is actually buyable.
+ *
+ * `isActive`/`deletedAt` are not enough: a sold item keeps both in the
+ * "available" state for the week it remains visible in the seller's profile,
+ * and a reserved item is held by an accepted deal. Marketplace's own listings
+ * apply the same two conditions (`buildWhereClause`) — search has to match, or
+ * items that cannot be bought keep showing up.
+ *
+ * Every path that clears a reservation writes to the row (release, cancel,
+ * expiry sweep), so `updatedAt` moves and the incremental sync re-adds the item
+ * within one cycle.
+ */
+const PRODUCT_AVAILABLE = Prisma.sql`p."soldAt" IS NULL AND (p."reservedUntil" IS NULL OR p."reservedUntil" <= NOW())`;
+
 @Injectable()
 export class CatalogIndexerService {
   private readonly logger = new Logger(CatalogIndexerService.name);
@@ -39,7 +54,7 @@ export class CatalogIndexerService {
     await this.engine.ensureCollections();
     const docs = [
       ...(await this.loadProducts(
-        Prisma.sql`p."deletedAt" IS NULL AND p."isActive" = true`,
+        Prisma.sql`p."deletedAt" IS NULL AND p."isActive" = true AND ${PRODUCT_AVAILABLE}`,
       )),
       ...(await this.loadStoreProducts(
         Prisma.sql`sp."deletedAt" IS NULL AND sp."isActive" = true`,
@@ -60,7 +75,7 @@ export class CatalogIndexerService {
 
       const changed = [
         ...(await this.loadProducts(
-          Prisma.sql`p."deletedAt" IS NULL AND p."isActive" = true AND p."updatedAt" >= ${since}`,
+          Prisma.sql`p."deletedAt" IS NULL AND p."isActive" = true AND ${PRODUCT_AVAILABLE} AND p."updatedAt" >= ${since}`,
         )),
         ...(await this.loadStoreProducts(
           Prisma.sql`sp."deletedAt" IS NULL AND sp."isActive" = true AND sp."updatedAt" >= ${since}`,
@@ -247,7 +262,16 @@ export class CatalogIndexerService {
   private async loadDeactivatedIds(since: Date): Promise<string[]> {
     const products = await this.prisma.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Product"
-      WHERE "updatedAt" >= ${since} AND ("deletedAt" IS NOT NULL OR "isActive" = false)
+      WHERE "updatedAt" >= ${since}
+        AND (
+          "deletedAt" IS NOT NULL
+          OR "isActive" = false
+          -- A sold item keeps isActive=true and deletedAt=NULL for the week it
+          -- stays in the seller's profile, so without this it lingers in search.
+          OR "soldAt" IS NOT NULL
+          -- Held by an accepted deal: hidden until the hold clears.
+          OR ("reservedUntil" IS NOT NULL AND "reservedUntil" > NOW())
+        )
     `;
     const storeProducts = await this.prisma.$queryRaw<{ id: number }[]>`
       SELECT id FROM "StoreProduct"

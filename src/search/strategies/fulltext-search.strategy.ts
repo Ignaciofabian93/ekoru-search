@@ -59,6 +59,12 @@ export class FullTextSearchStrategy {
       WHERE 
         p."isActive" = true 
         AND p."deletedAt" IS NULL
+        -- Sold and reserved items are not buyable, and marketplace's own
+        -- listings exclude them (buildWhereClause). A sold product keeps
+        -- isActive=true for the week it stays in the seller's profile, so
+        -- without this it keeps turning up in search results.
+        AND p."soldAt" IS NULL
+        AND (p."reservedUntil" IS NULL OR p."reservedUntil" <= NOW())
         AND (
           to_tsvector('spanish', p.name || ' ' || COALESCE(p.description, '') || ' ' || p.brand) 
           @@ plainto_tsquery('spanish', ${searchQuery})
