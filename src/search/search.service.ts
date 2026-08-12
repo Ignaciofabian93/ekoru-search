@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,6 +33,8 @@ import { languageFilter } from './indexer/locale.config';
 
 @Injectable()
 export class SearchService {
+  private readonly logger = new Logger(SearchService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly fullTextSearch: FullTextSearchStrategy,
@@ -168,10 +170,14 @@ export class SearchService {
       minRating,
     } = input;
 
-    // Normalize and process query
+    // Normalize, then repair typos and widen with synonyms before hitting the
+    // index — `searchTerms` is what gets searched, `scoringTerms` is what the
+    // user meant and what results are ranked against.
     const normalizedQuery = this.normalizeQuery(query);
-    const searchTerms = this.tokenize(normalizedQuery);
-    const correctedQuery = await this.spellCheck(normalizedQuery);
+    const rawTerms = this.tokenize(normalizedQuery);
+    const { corrected: scoringTerms, expanded: searchTerms } =
+      await this.applyQueryAids(rawTerms);
+    const correctedQuery = scoringTerms.join(' ');
 
     // Search products and services based on type using full-text search.
     // `excludeSellerId` hides the current user's own listings from their results.
@@ -208,7 +214,7 @@ export class SearchService {
     // Calculate relevance scores for each result
     allResults = allResults.map((item) => ({
       ...item,
-      relevanceScore: this.calculateRelevanceScore(item, searchTerms),
+      relevanceScore: this.calculateRelevanceScore(item, scoringTerms),
     }));
 
     // Sort results
@@ -252,7 +258,7 @@ export class SearchService {
       processingTimeMs,
       suggestions,
       correctedQuery:
-        correctedQuery !== normalizedQuery ? correctedQuery : undefined,
+        correctedQuery !== rawTerms.join(' ') ? correctedQuery : undefined,
     };
   }
 
@@ -816,10 +822,108 @@ export class SearchService {
     }));
   }
 
-  private spellCheck(query: string): Promise<string> {
-    // Simple spell check - could be enhanced with a proper library
-    // For now, return the original query
-    return Promise.resolve(query);
+  /**
+   * Corrections and synonyms, cached in-process.
+   *
+   * Both tables are small, admin-curated and read on every single search, so
+   * they are loaded once and reused for `QUERY_AIDS_TTL_MS`. An admin edit takes
+   * up to that long to show up — the same trade the notification copy cache
+   * makes. Worth knowing if search is ever scaled past one replica: the cache is
+   * per-process, so replicas expire independently.
+   */
+  private queryAids: {
+    corrections: Map<string, string>;
+    synonyms: Map<string, string[]>;
+    loadedAt: number;
+  } | null = null;
+
+  private static readonly QUERY_AIDS_TTL_MS = 5 * 60 * 1000;
+
+  private async loadQueryAids(): Promise<{
+    corrections: Map<string, string>;
+    synonyms: Map<string, string[]>;
+  }> {
+    const cached = this.queryAids;
+    if (
+      cached &&
+      Date.now() - cached.loadedAt < SearchService.QUERY_AIDS_TTL_MS
+    ) {
+      return cached;
+    }
+
+    try {
+      const [corrections, synonyms] = await Promise.all([
+        this.prisma.searchCorrection.findMany({
+          where: { isActive: true },
+          // Highest-confidence correction wins when a typo has several
+          // candidates; frequency breaks ties with what users actually meant.
+          orderBy: [{ confidence: 'desc' }, { frequency: 'desc' }],
+          select: { incorrectTerm: true, correctTerm: true },
+        }),
+        this.prisma.searchSynonym.findMany({
+          where: { isActive: true },
+          orderBy: { weight: 'desc' },
+          select: { term: true, synonym: true },
+        }),
+      ]);
+
+      const correctionMap = new Map<string, string>();
+      for (const row of corrections) {
+        const key = row.incorrectTerm.toLowerCase();
+        if (!correctionMap.has(key)) {
+          correctionMap.set(key, row.correctTerm.toLowerCase());
+        }
+      }
+
+      const synonymMap = new Map<string, string[]>();
+      for (const row of synonyms) {
+        const term = row.term.toLowerCase();
+        const synonym = row.synonym.toLowerCase();
+        // Synonyms read both ways: someone searching either word should find
+        // listings written with the other.
+        synonymMap.set(term, [...(synonymMap.get(term) ?? []), synonym]);
+        synonymMap.set(synonym, [...(synonymMap.get(synonym) ?? []), term]);
+      }
+
+      this.queryAids = {
+        corrections: correctionMap,
+        synonyms: synonymMap,
+        loadedAt: Date.now(),
+      };
+      return this.queryAids;
+    } catch (error) {
+      this.logger.error('Could not load search corrections/synonyms', error);
+      // Search must not fail because the dictionaries are unavailable: fall
+      // back to the raw query.
+      return { corrections: new Map(), synonyms: new Map() };
+    }
+  }
+
+  /**
+   * Turns the user's tokens into what we actually search for.
+   *
+   * `corrected` is what the user most likely meant — it is echoed back as
+   * `correctedQuery` and used for relevance scoring. `expanded` adds synonyms
+   * on top, so a search for "bici" also matches listings that say "bicicleta",
+   * without a synonym hit outranking a real one.
+   */
+  private async applyQueryAids(terms: string[]): Promise<{
+    corrected: string[];
+    expanded: string[];
+  }> {
+    if (terms.length === 0) return { corrected: terms, expanded: terms };
+
+    const { corrections, synonyms } = await this.loadQueryAids();
+    const corrected = terms.map((term) => corrections.get(term) ?? term);
+
+    const expanded = new Set(corrected);
+    for (const term of corrected) {
+      for (const synonym of synonyms.get(term) ?? []) {
+        expanded.add(synonym);
+      }
+    }
+
+    return { corrected, expanded: [...expanded] };
   }
 
   private calculateAutocompleteScore(text: string, query: string): number {

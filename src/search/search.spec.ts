@@ -45,6 +45,13 @@ describe('SearchService', () => {
     popularSearch: {
       upsert: jest.fn(),
     },
+    // Query aids: typo corrections and synonyms, read on the Postgres path.
+    searchCorrection: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    searchSynonym: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     // Raw SQL is used by autocomplete/recommendations/trending (reads) and
     // trackView (view-count increment).
     $queryRaw: jest.fn(),
@@ -109,6 +116,8 @@ describe('SearchService', () => {
     mockPrismaService.searchLog.groupBy.mockResolvedValue([]);
     mockPrismaService.$queryRaw.mockResolvedValue([]);
     mockPrismaService.$executeRaw.mockResolvedValue(undefined);
+    mockPrismaService.searchCorrection.findMany.mockResolvedValue([]);
+    mockPrismaService.searchSynonym.findMany.mockResolvedValue([]);
   });
 
   describe('search', () => {
@@ -225,6 +234,49 @@ describe('SearchService', () => {
 
       expect(mockFullTextSearchStrategy.searchProducts).toHaveBeenCalled();
       expect(mockSearchEngine.search).not.toHaveBeenCalled();
+    });
+
+    it('corrects a typo and reports what it searched for instead', async () => {
+      mockConfigService.get.mockReturnValueOnce('postgres');
+      mockPrismaService.searchCorrection.findMany.mockResolvedValue([
+        { incorrectTerm: 'laptob', correctTerm: 'laptop' },
+      ]);
+      mockFullTextSearchStrategy.searchProducts.mockResolvedValue([]);
+      mockFullTextSearchStrategy.searchStoreProducts.mockResolvedValue([]);
+      mockFullTextSearchStrategy.searchServices.mockResolvedValue([]);
+      mockPrismaService.searchLog.create.mockResolvedValue({ id: 6 });
+
+      const result = await service.search({
+        input: { ...baseInput, query: 'laptob' },
+      });
+
+      expect(mockFullTextSearchStrategy.searchProducts).toHaveBeenCalledWith(
+        ['laptop'],
+        expect.anything(),
+      );
+      expect(result.correctedQuery).toBe('laptop');
+    });
+
+    it('widens the search with synonyms without claiming a correction', async () => {
+      mockConfigService.get.mockReturnValueOnce('postgres');
+      mockPrismaService.searchSynonym.findMany.mockResolvedValue([
+        { term: 'bici', synonym: 'bicicleta' },
+      ]);
+      mockFullTextSearchStrategy.searchProducts.mockResolvedValue([]);
+      mockFullTextSearchStrategy.searchStoreProducts.mockResolvedValue([]);
+      mockFullTextSearchStrategy.searchServices.mockResolvedValue([]);
+      mockPrismaService.searchLog.create.mockResolvedValue({ id: 7 });
+
+      const result = await service.search({
+        input: { ...baseInput, query: 'bici' },
+      });
+
+      expect(mockFullTextSearchStrategy.searchProducts).toHaveBeenCalledWith(
+        ['bici', 'bicicleta'],
+        expect.anything(),
+      );
+      // Nothing was misspelled, so there is no "did you mean" to show.
+      expect(result.correctedQuery).toBeUndefined();
     });
   });
 
