@@ -10,8 +10,6 @@ services:
     container_name: ekoru-search-staging
     env_file:
       - .env.staging
-    ports:
-      - "4006:4006"
     networks:
       - ekoru-staging-network
     deploy:

@@ -7,6 +7,7 @@ import {
   ApolloFederationDriverConfig,
 } from '@nestjs/apollo';
 import { Request, Response } from 'express';
+import { resolveIdentity } from './common/identity';
 import { PrismaModule } from './prisma/prisma.module';
 import { SearchModule } from './search/search.module';
 import { AdminSearchModule } from './adminSearch';
@@ -42,16 +43,16 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
         federation: 2,
       },
       sortSchema: true,
-      playground: process.env.NODE_ENV !== 'production',
+      playground: process.env.ENVIRONMENT !== 'production',
       context: ({ req, res }: { req: Request; res: Response }) => ({
         req,
         res,
-        sellerId: req.headers['x-seller-id'] as string,
-        adminId: req.headers['x-admin-id'] as string,
-        token: req.headers.authorization?.replace('Bearer ', '') as string,
+        // Identity from the verified access token, not from the unsigned
+        // `x-seller-id` / `x-admin-id` headers. See common/identity.ts.
+        ...resolveIdentity(req.headers),
       }),
       formatError: (error) => {
-        if (process.env.NODE_ENV === 'production') {
+        if (process.env.ENVIRONMENT === 'production') {
           delete error.extensions?.exception;
         }
         return error;
