@@ -4,32 +4,39 @@ import {
   Int,
   Float,
   registerEnumType,
-} from "@nestjs/graphql";
-import { IsOptional, IsString, Min, Max, IsArray } from "class-validator";
+} from '@nestjs/graphql';
+import {
+  IsOptional,
+  IsString,
+  Min,
+  Max,
+  IsArray,
+  IsInt,
+} from 'class-validator';
 
 export enum SearchType {
-  ALL = "ALL",
-  PRODUCTS = "PRODUCTS",
-  SERVICES = "SERVICES",
+  ALL = 'ALL',
+  PRODUCTS = 'PRODUCTS',
+  SERVICES = 'SERVICES',
 }
 
 export enum SearchSortBy {
-  RELEVANCE = "RELEVANCE",
-  PRICE_ASC = "PRICE_ASC",
-  PRICE_DESC = "PRICE_DESC",
-  NEWEST = "NEWEST",
-  RATING = "RATING",
-  POPULARITY = "POPULARITY",
+  RELEVANCE = 'RELEVANCE',
+  PRICE_ASC = 'PRICE_ASC',
+  PRICE_DESC = 'PRICE_DESC',
+  NEWEST = 'NEWEST',
+  RATING = 'RATING',
+  POPULARITY = 'POPULARITY',
 }
 
 registerEnumType(SearchType, {
-  name: "SearchType",
-  description: "Type of items to search for",
+  name: 'SearchType',
+  description: 'Type of items to search for',
 });
 
 registerEnumType(SearchSortBy, {
-  name: "SearchSortBy",
-  description: "Sort order for search results",
+  name: 'SearchSortBy',
+  description: 'Sort order for search results',
 });
 
 @InputType()
@@ -135,9 +142,11 @@ export class AutocompleteInput {
 @InputType()
 export class TrackSearchClickInput {
   @Field(() => Int)
+  @IsInt()
   searchId: number;
 
   @Field(() => Int)
+  @IsInt()
   itemId: number;
 
   @Field(() => String)
@@ -157,6 +166,7 @@ export class TrackSearchClickInput {
 @InputType()
 export class TrackItemViewInput {
   @Field(() => Int)
+  @IsInt()
   itemId: number;
 
   @Field(() => String)
