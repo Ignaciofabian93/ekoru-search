@@ -1,7 +1,8 @@
-import { UnauthorizedException } from '@nestjs/common';
 import { Resolver, Query, Args, Mutation, Int, Context } from '@nestjs/graphql';
 import { SearchService } from './search.service';
 import { CatalogIndexerService } from './indexer/catalog-indexer.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { assertAdminCan } from '../common/admin-access';
 import { Language } from '../graphql/enums';
 import {
   SearchInput,
@@ -22,6 +23,7 @@ export class SearchResolver {
   constructor(
     private readonly searchService: SearchService,
     private readonly indexer: CatalogIndexerService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Query(() => SearchResponse, {
@@ -57,9 +59,9 @@ export class SearchResolver {
       'Returns the number of documents indexed.',
   })
   async reindexCatalog(@Context() ctx: { adminId?: string }): Promise<number> {
-    if (!ctx.adminId) {
-      throw new UnauthorizedException('Admin authentication required');
-    }
+    // Rebuilding the index is the search settings' job (MANAGE_SETTINGS);
+    // any other admin token, a business admin's included, is refused.
+    await assertAdminCan(this.prisma, ctx.adminId, 'MANAGE_SETTINGS');
     const { indexed } = await this.indexer.reindexAll();
     return indexed;
   }

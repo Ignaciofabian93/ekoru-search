@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ScheduleModule } from '@nestjs/schedule';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import {
   ApolloFederationDriver,
   ApolloFederationDriverConfig,
@@ -36,6 +39,16 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
     // Schedule for cron jobs
     ScheduleModule.forRoot(),
 
+    // Rate limiting: 100 requests per minute per visitor (SRCH-2). Search and
+    // the tracking mutations are public, so without it they can be flooded,
+    // loading Typesense and polluting the analytics.
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 100,
+      },
+    ]),
+
     // GraphQL Federation
     GraphQLModule.forRoot<ApolloFederationDriverConfig>({
       driver: ApolloFederationDriver,
@@ -67,6 +80,6 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
     AdminSearchModule, // platform-admin CRUD over search config tables
   ],
   controllers: [HealthController],
-  providers: [JSONScalar],
+  providers: [JSONScalar, { provide: APP_GUARD, useClass: GqlThrottlerGuard }],
 })
 export class AppModule {}

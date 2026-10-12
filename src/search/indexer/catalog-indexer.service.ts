@@ -9,6 +9,7 @@ import {
   type CatalogDocument,
 } from '../engine/search-engine.interface';
 import { languageFromSeller } from './locale.config';
+import { sellerChangedSince, sellerVisible } from '../seller-visibility';
 
 /**
  * Incremental sync window. The cron runs every 5 min and re-reads everything
@@ -39,6 +40,14 @@ interface SellerLocaleCols {
  * within one cycle.
  */
 const PRODUCT_AVAILABLE = Prisma.sql`p."soldAt" IS NULL AND (p."reservedUntil" IS NULL OR p."reservedUntil" <= NOW())`;
+
+/** Item seller columns, for the seller visibility rules (SRCH-1). */
+const PRODUCT_SELLER = Prisma.raw('p."sellerId"');
+const STORE_SELLER = Prisma.raw('sp."sellerId"');
+const SERVICE_SELLER = Prisma.raw('s."sellerId"');
+
+/** Most ids per delete call, so the filter string stays reasonable. */
+const DELETE_CHUNK = 200;
 
 @Injectable()
 export class CatalogIndexerService {
@@ -75,19 +84,26 @@ export class CatalogIndexerService {
 
       const changed = [
         ...(await this.loadProducts(
-          Prisma.sql`p."deletedAt" IS NULL AND p."isActive" = true AND ${PRODUCT_AVAILABLE} AND p."updatedAt" >= ${since}`,
+          Prisma.sql`p."deletedAt" IS NULL AND p."isActive" = true AND ${PRODUCT_AVAILABLE} AND (p."updatedAt" >= ${since} OR ${sellerChangedSince(PRODUCT_SELLER, since)})`,
         )),
         ...(await this.loadStoreProducts(
-          Prisma.sql`sp."deletedAt" IS NULL AND sp."isActive" = true AND sp."updatedAt" >= ${since}`,
+          Prisma.sql`sp."deletedAt" IS NULL AND sp."isActive" = true AND (sp."updatedAt" >= ${since} OR ${sellerChangedSince(STORE_SELLER, since)})`,
         )),
         ...(await this.loadServices(
-          Prisma.sql`s."isActive" = true AND s."updatedAt" >= ${since}`,
+          Prisma.sql`s."isActive" = true AND (s."updatedAt" >= ${since} OR ${sellerChangedSince(SERVICE_SELLER, since)})`,
         )),
       ];
       await this.engine.indexDocuments(changed);
 
-      const removedIds = await this.loadDeactivatedIds(since);
-      await this.engine.deleteDocuments(removedIds);
+      const removedIds = [
+        ...(await this.loadDeactivatedIds(since)),
+        ...(await this.loadHiddenSellerIds()),
+      ];
+      for (let i = 0; i < removedIds.length; i += DELETE_CHUNK) {
+        await this.engine.deleteDocuments(
+          removedIds.slice(i, i + DELETE_CHUNK),
+        );
+      }
 
       if (changed.length || removedIds.length) {
         this.logger.log(
@@ -124,6 +140,7 @@ export class CatalogIndexerService {
         ON pct."productCategoryId" = p."productCategoryId" AND pct.language::text = 'ES'
       LEFT JOIN "Seller" s ON p."sellerId" = s.id
       WHERE ${where}
+        AND ${sellerVisible(PRODUCT_SELLER, { businessOnly: false })}
     `;
 
     return rows.map((row) => ({
@@ -180,6 +197,7 @@ export class CatalogIndexerService {
         ON sct."storeCategoryId" = ssc."storeCategoryId" AND sct.language::text = 'ES'
       LEFT JOIN "Seller" s ON sp."sellerId" = s.id
       WHERE ${where}
+        AND ${sellerVisible(STORE_SELLER, { businessOnly: true })}
     `;
 
     return rows.map((row) => ({
@@ -232,6 +250,7 @@ export class CatalogIndexerService {
         ON sctt."serviceCategoryId" = sc."serviceCategoryId" AND sctt.language::text = 'ES'
       LEFT JOIN "Seller" sel ON s."sellerId" = sel.id
       WHERE ${where}
+        AND ${sellerVisible(SERVICE_SELLER, { businessOnly: true })}
     `;
 
     return rows.map((row) => ({
@@ -282,6 +301,35 @@ export class CatalogIndexerService {
       WHERE "updatedAt" >= ${since} AND "isActive" = false
     `;
 
+    return [
+      ...products.map((r) => `product_${r.id}`),
+      ...storeProducts.map((r) => `store_${r.id}`),
+      ...services.map((r) => `service_${r.id}`),
+    ];
+  }
+
+  /**
+   * Namespaced ids of every item whose seller may not be found (SRCH-1):
+   * banned or deactivated accounts and unapproved businesses. Read in full each
+   * cycle rather than by change window, so a missed cycle cannot leave a
+   * banned seller's items behind; the list is short, and deleting an id that
+   * is not indexed does nothing.
+   */
+  private async loadHiddenSellerIds(): Promise<string[]> {
+    const products = await this.prisma.$queryRaw<{ id: number }[]>`
+      SELECT p.id FROM "Product" p
+      WHERE p."deletedAt" IS NULL
+        AND NOT ${sellerVisible(PRODUCT_SELLER, { businessOnly: false })}
+    `;
+    const storeProducts = await this.prisma.$queryRaw<{ id: number }[]>`
+      SELECT sp.id FROM "StoreProduct" sp
+      WHERE sp."deletedAt" IS NULL
+        AND NOT ${sellerVisible(STORE_SELLER, { businessOnly: true })}
+    `;
+    const services = await this.prisma.$queryRaw<{ id: number }[]>`
+      SELECT s.id FROM "Service" s
+      WHERE NOT ${sellerVisible(SERVICE_SELLER, { businessOnly: true })}
+    `;
     return [
       ...products.map((r) => `product_${r.id}`),
       ...storeProducts.map((r) => `store_${r.id}`),

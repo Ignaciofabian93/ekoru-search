@@ -1,3 +1,5 @@
+import express from 'express';
+import helmet from 'helmet';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -10,8 +12,28 @@ async function bootstrap() {
   });
   const configService = app.get(ConfigService);
 
-  // Enable CORS
-  app.enableCors();
+  // HTTP security headers (SRCH-2)
+  app.use(
+    helmet({
+      crossOriginEmbedderPolicy: false, // required for GraphQL playground
+      contentSecurityPolicy: process.env.ENVIRONMENT === 'production',
+    }),
+  );
+
+  // Browsers reach search through the gateway, never directly, so CORS is
+  // limited to ALLOWED_ORIGINS (none by default) like the other subgraphs.
+  const allowedOrigins = (configService.get<string>('ALLOWED_ORIGINS') || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin: allowedOrigins.length ? allowedOrigins : false,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  });
+
+  // Limit request body size
+  app.use(express.json({ limit: '1mb' }));
 
   // Global validation pipe
   app.useGlobalPipes(

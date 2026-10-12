@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { sellerVisible } from '../seller-visibility';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import {
@@ -65,6 +66,7 @@ export class FullTextSearchStrategy {
         -- without this it keeps turning up in search results.
         AND p."soldAt" IS NULL
         AND (p."reservedUntil" IS NULL OR p."reservedUntil" <= NOW())
+        AND ${sellerVisible(Prisma.raw('p."sellerId"'), { businessOnly: false })}
         AND (
           to_tsvector('spanish', p.name || ' ' || COALESCE(p.description, '') || ' ' || p.brand) 
           @@ plainto_tsquery('spanish', ${searchQuery})
@@ -158,6 +160,7 @@ export class FullTextSearchStrategy {
       WHERE 
         sp."isActive" = true 
         AND sp."deletedAt" IS NULL
+        AND ${sellerVisible(Prisma.raw('sp."sellerId"'), { businessOnly: true })}
         AND (
           to_tsvector('spanish', sp.name || ' ' || sp.description || ' ' || COALESCE(sp.brand, '')) 
           @@ plainto_tsquery('spanish', ${searchQuery})
@@ -242,6 +245,7 @@ export class FullTextSearchStrategy {
       LEFT JOIN "ServiceCategory" scat ON sc."serviceCategoryId" = scat.id
       WHERE 
         s."isActive" = true
+        AND ${sellerVisible(Prisma.raw('s."sellerId"'), { businessOnly: true })}
         AND (
           to_tsvector('spanish', s.name || ' ' || COALESCE(s.description, '')) 
           @@ plainto_tsquery('spanish', ${searchQuery})

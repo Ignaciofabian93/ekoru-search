@@ -1,11 +1,7 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertAdminCan } from '../common/admin-access';
 import {
   calculatePrismaParams,
   createPaginatedResponse,
@@ -44,7 +40,7 @@ export class AdminSearchService {
   // ─── Synonyms ───────────────────────────────────────────────────────────────
 
   async getRawSynonyms(args: SearchConfigListArgs & { adminId?: string }) {
-    this.requireAdmin(args.adminId);
+    await assertAdminCan(this.prisma, args.adminId, 'MANAGE_SETTINGS');
     const { skip, take } = calculatePrismaParams(args.page, args.pageSize);
     const where: Prisma.SearchSynonymWhereInput = {
       ...(args.id != null && { id: args.id }),
@@ -69,7 +65,7 @@ export class AdminSearchService {
     adminId: string | undefined,
     rows: SearchSynonymUpsertRowInput[],
   ) {
-    this.requireAdmin(adminId);
+    await assertAdminCan(this.prisma, adminId, 'MANAGE_SETTINGS');
     return this.processRows(rows, async (row) => {
       const data = this.pickDefined({
         term: row.term,
@@ -90,7 +86,7 @@ export class AdminSearchService {
   }
 
   async deleteSynonym(adminId: string | undefined, id: number) {
-    this.requireAdmin(adminId);
+    await assertAdminCan(this.prisma, adminId, 'MANAGE_SETTINGS');
     return this.hardDelete(() =>
       this.prisma.searchSynonym.delete({ where: { id } }),
     );
@@ -99,7 +95,7 @@ export class AdminSearchService {
   // ─── Corrections ──────────────────────────────────────────────────────────
 
   async getRawCorrections(args: SearchConfigListArgs & { adminId?: string }) {
-    this.requireAdmin(args.adminId);
+    await assertAdminCan(this.prisma, args.adminId, 'MANAGE_SETTINGS');
     const { skip, take } = calculatePrismaParams(args.page, args.pageSize);
     const where: Prisma.SearchCorrectionWhereInput = {
       ...(args.id != null && { id: args.id }),
@@ -124,7 +120,7 @@ export class AdminSearchService {
     adminId: string | undefined,
     rows: SearchCorrectionUpsertRowInput[],
   ) {
-    this.requireAdmin(adminId);
+    await assertAdminCan(this.prisma, adminId, 'MANAGE_SETTINGS');
     return this.processRows(rows, async (row) => {
       const data = this.pickDefined({
         incorrectTerm: row.incorrectTerm,
@@ -153,7 +149,7 @@ export class AdminSearchService {
   }
 
   async deleteCorrection(adminId: string | undefined, id: number) {
-    this.requireAdmin(adminId);
+    await assertAdminCan(this.prisma, adminId, 'MANAGE_SETTINGS');
     return this.hardDelete(() =>
       this.prisma.searchCorrection.delete({ where: { id } }),
     );
@@ -162,7 +158,7 @@ export class AdminSearchService {
   // ─── Suggestions ──────────────────────────────────────────────────────────
 
   async getRawSuggestions(args: SearchConfigListArgs & { adminId?: string }) {
-    this.requireAdmin(args.adminId);
+    await assertAdminCan(this.prisma, args.adminId, 'MANAGE_SETTINGS');
     const { skip, take } = calculatePrismaParams(args.page, args.pageSize);
     const where: Prisma.SearchSuggestionWhereInput = {
       ...(args.id != null && { id: args.id }),
@@ -187,7 +183,7 @@ export class AdminSearchService {
     adminId: string | undefined,
     rows: SearchSuggestionUpsertRowInput[],
   ) {
-    this.requireAdmin(adminId);
+    await assertAdminCan(this.prisma, adminId, 'MANAGE_SETTINGS');
     return this.processRows(rows, async (row) => {
       const data = this.pickDefined({
         term: row.term,
@@ -210,18 +206,13 @@ export class AdminSearchService {
   }
 
   async deleteSuggestion(adminId: string | undefined, id: number) {
-    this.requireAdmin(adminId);
+    await assertAdminCan(this.prisma, adminId, 'MANAGE_SETTINGS');
     return this.hardDelete(() =>
       this.prisma.searchSuggestion.delete({ where: { id } }),
     );
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
-
-  private requireAdmin(adminId?: string): void {
-    if (!adminId)
-      throw new UnauthorizedException('Admin authentication required');
-  }
 
   private async hardDelete(fn: () => Promise<unknown>): Promise<boolean> {
     try {
