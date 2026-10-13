@@ -7,6 +7,12 @@ import {
   SearchResultType,
 } from '../entities/search-result.entity';
 
+/**
+ * PostgreSQL full-text search, the rollback path behind SEARCH_ENGINE=postgres.
+ * Category names come from the ES translation tables, the same joins the
+ * Typesense indexer's loaders use (catalog-indexer.service.ts); keep the two
+ * in step. fulltext-search.strategy.spec.ts pins the columns read here.
+ */
 @Injectable()
 export class FullTextSearchStrategy {
   constructor(private readonly prisma: PrismaService) {}
@@ -50,13 +56,14 @@ export class FullTextSearchStrategy {
         p."sellerId",
         p.interests as tags,
         p."viewCount",
-        pc."productCategoryName" as category,
+        pct.name as category,
         ts_rank(
           to_tsvector('spanish', p.name || ' ' || COALESCE(p.description, '') || ' ' || p.brand),
           plainto_tsquery('spanish', ${searchQuery})
         ) as relevance_score
       FROM "Product" p
-      LEFT JOIN "ProductCategory" pc ON p."productCategoryId" = pc.id
+      LEFT JOIN "ProductCategoryTranslation" pct
+        ON pct."productCategoryId" = p."productCategoryId" AND pct.language::text = 'ES'
       WHERE 
         p."isActive" = true 
         AND p."deletedAt" IS NULL
@@ -126,7 +133,7 @@ export class FullTextSearchStrategy {
         ? Prisma.sql`AND sp."hasOffer" = ${filters.hasOffer}`
         : Prisma.empty;
     const minRatingCondition = filters.minRating
-      ? Prisma.sql`AND sp.ratings >= ${filters.minRating}`
+      ? Prisma.sql`AND sp."averageRating" >= ${filters.minRating}`
       : Prisma.empty;
     // Hide the current user's own store products from their search results.
     const excludeSellerCondition = filters.excludeSellerId
@@ -143,20 +150,23 @@ export class FullTextSearchStrategy {
         sp."hasOffer",
         sp.images,
         sp.brand,
-        sp.ratings as "averageRating",
+        sp."averageRating",
         sp."reviewsNumber" as "reviewCount",
         sp."sellerId",
         sp."viewCount",
         sp."saleCount",
-        ssc."subCategory" as subcategory,
-        sc.category,
+        ssct.name as subcategory,
+        sct.name as category,
         ts_rank(
           to_tsvector('spanish', sp.name || ' ' || sp.description || ' ' || COALESCE(sp.brand, '')),
           plainto_tsquery('spanish', ${searchQuery})
         ) as relevance_score
       FROM "StoreProduct" sp
-      LEFT JOIN "StoreSubCategory" ssc ON sp."subcategoryId" = ssc.id
-      LEFT JOIN "StoreCategory" sc ON ssc."storeCategoryId" = sc.id
+      LEFT JOIN "StoreSubCategory" ssc ON sp."subCategoryId" = ssc.id
+      LEFT JOIN "StoreSubCategoryTranslation" ssct
+        ON ssct."storeSubCategoryId" = ssc.id AND ssct.language::text = 'ES'
+      LEFT JOIN "StoreCategoryTranslation" sct
+        ON sct."storeCategoryId" = ssc."storeCategoryId" AND sct.language::text = 'ES'
       WHERE 
         sp."isActive" = true 
         AND sp."deletedAt" IS NULL
@@ -234,15 +244,18 @@ export class FullTextSearchStrategy {
         s."sellerId",
         s."viewCount",
         s."averageRating",
-        sc."subCategory" as subcategory,
-        scat.category,
+        ssct."subCategory" as subcategory,
+        sctt.category,
         ts_rank(
           to_tsvector('spanish', s.name || ' ' || COALESCE(s.description, '')),
           plainto_tsquery('spanish', ${searchQuery})
         ) as relevance_score
       FROM "Service" s
       LEFT JOIN "ServiceSubCategory" sc ON s."subcategoryId" = sc.id
-      LEFT JOIN "ServiceCategory" scat ON sc."serviceCategoryId" = scat.id
+      LEFT JOIN "ServiceSubCategoryTranslation" ssct
+        ON ssct."serviceSubCategoryId" = sc.id AND ssct.language::text = 'ES'
+      LEFT JOIN "ServiceCategoryTranslation" sctt
+        ON sctt."serviceCategoryId" = sc."serviceCategoryId" AND sctt.language::text = 'ES'
       WHERE 
         s."isActive" = true
         AND ${sellerVisible(Prisma.raw('s."sellerId"'), { businessOnly: true })}

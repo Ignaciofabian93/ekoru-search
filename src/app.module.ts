@@ -2,7 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ScheduleModule } from '@nestjs/schedule';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { AdminActivityInterceptor } from './common/admin-activity.interceptor';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import {
@@ -80,6 +81,11 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
     AdminSearchModule, // platform-admin CRUD over search config tables
   ],
   controllers: [HealthController],
-  providers: [JSONScalar, { provide: APP_GUARD, useClass: GqlThrottlerGuard }],
+  providers: [
+    JSONScalar,
+    { provide: APP_GUARD, useClass: GqlThrottlerGuard },
+    // Every admin mutation leaves an AdminActivityLog row (USR-12).
+    { provide: APP_INTERCEPTOR, useClass: AdminActivityInterceptor },
+  ],
 })
 export class AppModule {}
