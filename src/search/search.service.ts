@@ -283,9 +283,13 @@ export class SearchService {
       const products = await this.prisma.$queryRaw<
         { id: number; name: string; category: string | null }[]
       >`
-        SELECT p.id, p.name, pc."productCategoryName" as category
+        SELECT p.id, p.name, pct.name as category
         FROM "Product" p
-        LEFT JOIN "ProductCategory" pc ON p."productCategoryId" = pc.id
+        -- Category names live in the translation table (the old
+        -- "ProductCategory"."productCategoryName" column no longer exists, so
+        -- every product suggestion errored). Spanish, as the indexer uses.
+        LEFT JOIN "ProductCategoryTranslation" pct
+          ON pct."productCategoryId" = p."productCategoryId" AND pct.language::text = 'ES'
         WHERE p."isActive" = true
           AND p."deletedAt" IS NULL
           AND (p.name ILIKE ${productPattern} OR p.brand ILIKE ${productPattern})
