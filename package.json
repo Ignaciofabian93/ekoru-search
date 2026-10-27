@@ -108,5 +108,8 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "overrides": {
+    "follow-redirects": "1.16.1"
   }
 }
