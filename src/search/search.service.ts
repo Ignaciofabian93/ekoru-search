@@ -11,6 +11,7 @@ import {
   RecommendationInput,
   TrackSearchClickInput,
   TrackItemViewInput,
+  ItemViewSource,
 } from './dto/search.input';
 import {
   SearchResponse,
@@ -1015,7 +1016,6 @@ export class SearchService {
           itemId: input.itemId,
           itemType: input.itemType,
           position: input.position,
-          userId: input.userId,
           clickedAt: new Date(),
         },
       });
@@ -1046,23 +1046,38 @@ export class SearchService {
     }
   }
 
+  /**
+   * Counts one view of an item: bumps its `viewCount` and records the view, by
+   * day and source, for the business's analytics. Nothing identifies the
+   * visitor. A view of an id that matches no item is ignored, so made-up ids
+   * leave no rows behind.
+   */
   async trackView(input: TrackItemViewInput): Promise<boolean> {
     try {
-      // Update view count based on item type using raw SQL (cross-schema query)
-      if (input.itemType === 'PRODUCT') {
-        await this.prisma.$executeRaw`
+      // The item tables belong to other subgraphs, hence raw SQL.
+      let updated = 0;
+      if (input.itemType === SearchResultType.PRODUCT) {
+        updated = await this.prisma.$executeRaw`
           UPDATE "Product" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
         `;
-      } else if (input.itemType === 'STORE_PRODUCT') {
-        await this.prisma.$executeRaw`
+      } else if (input.itemType === SearchResultType.STORE_PRODUCT) {
+        updated = await this.prisma.$executeRaw`
           UPDATE "StoreProduct" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
         `;
-      } else if (input.itemType === 'SERVICE') {
-        await this.prisma.$executeRaw`
+      } else if (input.itemType === SearchResultType.SERVICE) {
+        updated = await this.prisma.$executeRaw`
           UPDATE "Service" SET "viewCount" = "viewCount" + 1 WHERE id = ${input.itemId}
         `;
       }
+      if (updated === 0) return false;
 
+      await this.prisma.itemView.create({
+        data: {
+          itemId: input.itemId,
+          itemType: input.itemType,
+          source: input.source ?? ItemViewSource.OTHER,
+        },
+      });
       return true;
     } catch {
       return false;

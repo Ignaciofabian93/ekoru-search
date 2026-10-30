@@ -11,8 +11,10 @@ import {
   Min,
   Max,
   IsArray,
+  IsEnum,
   IsInt,
 } from 'class-validator';
+import { SearchResultType } from '../entities/search-result.entity';
 
 export enum SearchType {
   ALL = 'ALL',
@@ -139,6 +141,31 @@ export class AutocompleteInput {
   type?: SearchType = SearchType.ALL;
 }
 
+/**
+ * Where a visitor was just before opening an item, so a business can see
+ * which surfaces bring it views. The client works it out from the page or
+ * screen it came from.
+ */
+export enum ItemViewSource {
+  SEARCH = 'SEARCH',
+  CATALOG = 'CATALOG',
+  SELLER = 'SELLER',
+  HOME = 'HOME',
+  ITEM = 'ITEM',
+  EXTERNAL = 'EXTERNAL',
+  OTHER = 'OTHER',
+}
+
+registerEnumType(ItemViewSource, {
+  name: 'ItemViewSource',
+  description:
+    'Where the visitor came from: search, a catalog list, a seller page, the home page, another item, outside EKORU (first page opened), or elsewhere',
+});
+
+/**
+ * Clicks and views carry no user or session id: the counts are anonymous, so
+ * they are not personal data and need no consent (Ley 21.719).
+ */
 @InputType()
 export class TrackSearchClickInput {
   @Field(() => Int)
@@ -147,49 +174,32 @@ export class TrackSearchClickInput {
 
   @Field(() => Int)
   @IsInt()
+  @Min(1)
   itemId: number;
 
-  @Field(() => String)
-  @IsString()
-  itemType: string;
+  @Field(() => SearchResultType)
+  @IsEnum(SearchResultType)
+  itemType: SearchResultType;
 
   @Field(() => Int)
+  @IsInt()
   @Min(1)
   position: number;
-
-  @Field(() => String, { nullable: true })
-  @IsOptional()
-  @IsString()
-  userId?: string;
 }
 
 @InputType()
 export class TrackItemViewInput {
   @Field(() => Int)
   @IsInt()
+  @Min(1)
   itemId: number;
 
-  @Field(() => String)
-  @IsString()
-  itemType: string;
+  @Field(() => SearchResultType)
+  @IsEnum(SearchResultType)
+  itemType: SearchResultType;
 
-  @Field(() => String, { nullable: true })
+  @Field(() => ItemViewSource, { nullable: true })
   @IsOptional()
-  @IsString()
-  userId?: string;
-
-  @Field(() => String, { nullable: true })
-  @IsOptional()
-  @IsString()
-  sessionId?: string;
-
-  @Field(() => Int, { nullable: true })
-  @IsOptional()
-  @Min(0)
-  duration?: number;
-
-  @Field(() => String, { nullable: true })
-  @IsOptional()
-  @IsString()
-  source?: string;
+  @IsEnum(ItemViewSource)
+  source?: ItemViewSource;
 }

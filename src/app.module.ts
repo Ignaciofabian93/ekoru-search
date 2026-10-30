@@ -16,6 +16,7 @@ import { resolveIdentity } from './common/identity';
 import { PrismaModule } from './prisma/prisma.module';
 import { SearchModule } from './search/search.module';
 import { AdminSearchModule } from './adminSearch';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { JSONScalar } from './graphql/scalars';
 import configuration from './config/configuration';
 
@@ -80,6 +81,7 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
     // Feature modules
     SearchModule,
     AdminSearchModule, // platform-admin CRUD over search config tables
+    AnalyticsModule, // the panel dashboards: EKORU totals, business figures
   ],
   controllers: [HealthController],
   providers: [

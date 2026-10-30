@@ -12,7 +12,7 @@ import {
   AutocompleteInput,
   RecommendationInput,
   TrackSearchClickInput,
-  TrackItemViewInput,
+  ItemViewSource,
 } from './dto/search.input';
 import { SearchResultType } from './entities/search-result.entity';
 
@@ -579,38 +579,36 @@ describe('SearchService', () => {
   });
 
   describe('trackClick', () => {
-    it('should track search click successfully', async () => {
+    it('records the click with no user, and counts it on the query', async () => {
       const trackClickInput: TrackSearchClickInput = {
         searchId: 1,
         itemId: 10,
-        itemType: 'PRODUCT',
+        itemType: SearchResultType.PRODUCT,
         position: 1,
-        userId: 'user123',
       };
 
-      const mockSearchLog = {
+      mockPrismaService.searchClick.create.mockResolvedValue({});
+      mockPrismaService.searchLog.findUnique.mockResolvedValue({
         id: 1,
         query: 'laptop',
         resultCount: 5,
         createdAt: new Date(),
-      };
-
-      mockPrismaService.searchClick.create.mockResolvedValue({});
-      mockPrismaService.searchLog.findUnique.mockResolvedValue(mockSearchLog);
+      });
       mockPrismaService.popularSearch.upsert.mockResolvedValue({});
 
       const result = await service.trackClick(trackClickInput);
 
       expect(result).toBe(true);
-      expect(mockPrismaService.searchClick.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
+      const { data } = mockPrismaService.searchClick.create.mock.calls[0][0];
+      expect(data).toEqual(
+        expect.objectContaining({
           searchId: 1,
           itemId: 10,
           itemType: 'PRODUCT',
           position: 1,
-          userId: 'user123',
         }),
-      });
+      );
+      expect(data.userId).toBeUndefined();
       expect(mockPrismaService.popularSearch.upsert).toHaveBeenCalled();
     });
 
@@ -618,7 +616,7 @@ describe('SearchService', () => {
       const trackClickInput: TrackSearchClickInput = {
         searchId: 1,
         itemId: 10,
-        itemType: 'PRODUCT',
+        itemType: SearchResultType.PRODUCT,
         position: 1,
       };
 
@@ -635,19 +633,17 @@ describe('SearchService', () => {
       const trackClickInput: TrackSearchClickInput = {
         searchId: 1,
         itemId: 10,
-        itemType: 'SERVICE',
+        itemType: SearchResultType.SERVICE,
         position: 2,
       };
 
-      const mockSearchLog = {
+      mockPrismaService.searchClick.create.mockResolvedValue({});
+      mockPrismaService.searchLog.findUnique.mockResolvedValue({
         id: 1,
         query: 'repair service',
         resultCount: 3,
         createdAt: new Date(),
-      };
-
-      mockPrismaService.searchClick.create.mockResolvedValue({});
-      mockPrismaService.searchLog.findUnique.mockResolvedValue(mockSearchLog);
+      });
       mockPrismaService.popularSearch.upsert.mockResolvedValue({});
 
       await service.trackClick(trackClickInput);
@@ -668,76 +664,66 @@ describe('SearchService', () => {
   });
 
   describe('trackView', () => {
-    it('should track item view for PRODUCT successfully', async () => {
-      const trackViewInput: TrackItemViewInput = {
-        itemId: 5,
-        itemType: 'PRODUCT',
-        userId: 'user456',
-        sessionId: 'session789',
-        duration: 120,
-        source: 'search',
-      };
+    it.each([
+      [SearchResultType.PRODUCT, '"Product"'],
+      [SearchResultType.STORE_PRODUCT, '"StoreProduct"'],
+      [SearchResultType.SERVICE, '"Service"'],
+    ])(
+      'counts a %s view on its table and records it anonymously',
+      async (itemType, table) => {
+        mockPrismaService.$executeRaw.mockResolvedValue(1);
 
-      const result = await service.trackView(trackViewInput);
+        const result = await service.trackView({
+          itemId: 5,
+          itemType,
+          source: ItemViewSource.SEARCH,
+        });
 
-      expect(result).toBe(true);
-      // trackView increments the Product view count via raw SQL.
-      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
+        expect(result).toBe(true);
+        const sql = (
+          mockPrismaService.$executeRaw.mock.calls[0][0] as string[]
+        ).join('');
+        expect(sql).toContain(table);
+        expect(mockPrismaService.itemView.create).toHaveBeenCalledWith({
+          data: { itemId: 5, itemType, source: 'SEARCH' },
+        });
+      },
+    );
+
+    it('records a view with no source as OTHER', async () => {
+      mockPrismaService.$executeRaw.mockResolvedValue(1);
+
+      await service.trackView({
+        itemId: 2,
+        itemType: SearchResultType.PRODUCT,
+      });
+
+      expect(mockPrismaService.itemView.create).toHaveBeenCalledWith({
+        data: { itemId: 2, itemType: 'PRODUCT', source: 'OTHER' },
+      });
     });
 
-    it('should track item view for SERVICE successfully', async () => {
-      const trackViewInput: TrackItemViewInput = {
-        itemId: 3,
-        itemType: 'SERVICE',
-        sessionId: 'session123',
-      };
+    it('ignores an id that matches no item', async () => {
+      mockPrismaService.$executeRaw.mockResolvedValue(0);
 
-      const result = await service.trackView(trackViewInput);
+      const result = await service.trackView({
+        itemId: 999999,
+        itemType: SearchResultType.SERVICE,
+      });
 
-      expect(result).toBe(true);
-      // trackView increments the Service view count via raw SQL.
-      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
-    });
-
-    it('should track item view for STORE_PRODUCT successfully', async () => {
-      const trackViewInput: TrackItemViewInput = {
-        itemId: 7,
-        itemType: 'STORE_PRODUCT',
-        userId: 'user789',
-      };
-
-      const result = await service.trackView(trackViewInput);
-
-      expect(result).toBe(true);
-      // trackView increments the StoreProduct view count via raw SQL.
-      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
+      expect(result).toBe(false);
+      expect(mockPrismaService.itemView.create).not.toHaveBeenCalled();
     });
 
     it('should return false on tracking error', async () => {
-      const trackViewInput: TrackItemViewInput = {
-        itemId: 1,
-        itemType: 'PRODUCT',
-      };
-
       mockPrismaService.$executeRaw.mockRejectedValue(new Error('DB Error'));
 
-      const result = await service.trackView(trackViewInput);
+      const result = await service.trackView({
+        itemId: 1,
+        itemType: SearchResultType.PRODUCT,
+      });
 
       expect(result).toBe(false);
-    });
-
-    it('should handle item view without user ID', async () => {
-      const trackViewInput: TrackItemViewInput = {
-        itemId: 2,
-        itemType: 'PRODUCT',
-        sessionId: 'anon-session',
-      };
-
-      const result = await service.trackView(trackViewInput);
-
-      // No user id is required; trackView still increments the view count.
-      expect(result).toBe(true);
-      expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
     });
   });
 });
