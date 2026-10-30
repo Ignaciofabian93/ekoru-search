@@ -9,7 +9,7 @@ export class TrendingService {
   constructor(private readonly prisma: PrismaService) {}
 
   // Update trending scores every hour
-  @Cron(CronExpression.EVERY_HOUR)
+  @Cron(CronExpression.EVERY_HOUR, { waitForCompletion: true })
   async updateTrendingScores() {
     try {
       this.logger.log('Updating trending search scores...');
@@ -58,7 +58,7 @@ export class TrendingService {
   }
 
   // Clean up old search logs (run daily at midnight)
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT, { waitForCompletion: true })
   async cleanupOldSearchLogs() {
     try {
       this.logger.log('Cleaning up old search logs...');
@@ -78,7 +78,7 @@ export class TrendingService {
   }
 
   // Update search suggestions based on frequency (run daily)
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_DAY_AT_1AM, { waitForCompletion: true })
   async updateSearchSuggestions() {
     try {
       this.logger.log('Updating search suggestions...');
@@ -125,7 +125,7 @@ export class TrendingService {
   }
 
   // Deactivate unpopular suggestions (run weekly)
-  @Cron(CronExpression.EVERY_WEEK)
+  @Cron(CronExpression.EVERY_WEEK, { waitForCompletion: true })
   async deactivateUnpopularSuggestions() {
     try {
       this.logger.log('Deactivating unpopular search suggestions...');

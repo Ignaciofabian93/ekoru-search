@@ -4,6 +4,7 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AdminActivityInterceptor } from './common/admin-activity.interceptor';
+import { CronShutdown } from './common/cron-shutdown';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import {
@@ -86,6 +87,8 @@ import { PrometheusModule } from '@willsoto/nestjs-prometheus';
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },
     // Every admin mutation leaves an AdminActivityLog row (USR-12).
     { provide: APP_INTERCEPTOR, useClass: AdminActivityInterceptor },
+    // A cron run in progress finishes before the database closes on shutdown.
+    CronShutdown,
   ],
 })
 export class AppModule {}

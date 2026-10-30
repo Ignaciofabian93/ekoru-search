@@ -47,6 +47,9 @@ async function bootstrap() {
     }),
   );
 
+  // On `docker stop`, finish the requests and jobs in progress, then exit.
+  app.enableShutdownHooks(['SIGTERM', 'SIGINT']);
+
   const port = configService.get<number>('PORT') || 4005;
   await app.listen(port);
 

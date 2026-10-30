@@ -76,7 +76,7 @@ export class CatalogIndexerService {
   }
 
   /** Periodic catch-up: upsert recently-changed items, drop deactivated ones. */
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @Cron(CronExpression.EVERY_5_MINUTES, { waitForCompletion: true })
   async syncIncremental(): Promise<void> {
     try {
       await this.engine.ensureCollections();
