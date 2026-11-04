@@ -50,6 +50,13 @@ describe('businessAdminSellerId', () => {
     expect(await businessAdminSellerId(prisma, 'a1')).toBe('s1');
   });
 
+  it("lets the business's owner in without the permission listed", async () => {
+    const prisma = prismaReturning([
+      bizAdmin({ role: 'BUSINESS_OWNER', permissions: [] }),
+    ]);
+    expect(await businessAdminSellerId(prisma, 'a1')).toBe('s1');
+  });
+
   it('refuses platform admins, even a super admin with every permission', async () => {
     const prisma = prismaReturning([
       admin({ role: 'SUPER_ADMIN', permissions: ['VIEW_ANALYTICS'] }),

@@ -57,9 +57,11 @@ export async function assertAdminCan(
 /**
  * The seller whose figures a BUSINESS admin may read: their own, and only
  * theirs, given VIEW_BUSINESS_ANALYTICS (so an owner can keep a support login
- * away from the money). EKORU's platform admins are refused too, whatever their
- * permissions: they see platform totals, never one business's figures. The
- * admin row is read per request, so a deactivated admin loses access at once.
+ * away from the money). The business's owner holds it implicitly, as every
+ * business permission (USR-15). EKORU's platform admins are refused too,
+ * whatever their permissions: they see platform totals, never one business's
+ * figures. The admin row is read per request, so a deactivated admin loses
+ * access at once.
  */
 export async function businessAdminSellerId(
   prisma: PrismaService,
@@ -70,12 +72,14 @@ export async function businessAdminSellerId(
   const rows = await prisma.$queryRaw<
     {
       adminType: string;
+      role: string;
       isActive: boolean;
       sellerId: string | null;
       permissions: string[];
     }[]
   >`
     SELECT "adminType"::text     AS "adminType",
+           "role"::text          AS "role",
            "isActive",
            "sellerId",
            "permissions"::text[] AS "permissions"
@@ -88,7 +92,8 @@ export async function businessAdminSellerId(
     !admin?.isActive ||
     admin.adminType !== 'BUSINESS' ||
     !admin.sellerId ||
-    !(admin.permissions ?? []).includes('VIEW_BUSINESS_ANALYTICS')
+    (admin.role !== 'BUSINESS_OWNER' &&
+      !(admin.permissions ?? []).includes('VIEW_BUSINESS_ANALYTICS'))
   ) {
     throw new ForbiddenError(
       "Only a business's own admins with VIEW_BUSINESS_ANALYTICS can read its figures",
